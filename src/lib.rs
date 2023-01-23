@@ -31,6 +31,8 @@ enum SearchResult<K, V> {
     PotentialParentForInsertion(Option<NonNull<Node<K, V>>>),
 }
 
+use SearchResult::*;
+
 impl<K, V> RBTreeMap<K, V> {
     /// Makes a new, empty `RBTreeMap`.
     ///
@@ -86,14 +88,14 @@ impl<K, V> RBTreeMap<K, V> {
             y = x;
             unsafe {
                 match (*boxed_x.as_ptr()).key.borrow().cmp(key) {
-                    Ordering::Equal => return SearchResult::Found(boxed_x),
+                    Ordering::Equal => return Found(boxed_x),
                     Ordering::Greater => x = (*boxed_x.as_ptr()).left,
                     Ordering::Less => x = (*boxed_x.as_ptr()).right,
                 }
             }
         }
 
-        SearchResult::PotentialParentForInsertion(y)
+        PotentialParentForInsertion(y)
     }
 
     /// Returns a reference to the value corresponding to the key.
@@ -119,8 +121,8 @@ impl<K, V> RBTreeMap<K, V> {
         Q: Ord + ?Sized,
     {
         match self.search_tree(key) {
-            SearchResult::Found(node) => Some(unsafe { &(*node.as_ptr()).val }),
-            SearchResult::PotentialParentForInsertion(_) => None,
+            Found(node) => Some(unsafe { &(*node.as_ptr()).val }),
+            PotentialParentForInsertion(_) => None,
         }
     }
 
@@ -145,10 +147,10 @@ impl<K, V> RBTreeMap<K, V> {
         Q: Ord + ?Sized,
     {
         match self.search_tree(key) {
-            SearchResult::Found(node) => {
+            Found(node) => {
                 Some(unsafe { (&(*node.as_ptr()).key, &(*node.as_ptr()).val) })
             }
-            SearchResult::PotentialParentForInsertion(_) => None,
+            PotentialParentForInsertion(_) => None,
         }
     }
 
@@ -260,8 +262,8 @@ impl<K, V> RBTreeMap<K, V> {
         Q: Ord + ?Sized,
     {
         match self.search_tree(key) {
-            SearchResult::Found(node) => Some(unsafe { &mut (*node.as_ptr()).val }),
-            SearchResult::PotentialParentForInsertion(_) => None,
+            Found(node) => Some(unsafe { &mut (*node.as_ptr()).val }),
+            PotentialParentForInsertion(_) => None,
         }
     }
 
@@ -293,46 +295,43 @@ impl<K, V> RBTreeMap<K, V> {
     where
         K: Ord,
     {
-        let parent_option;
         match self.search_tree(&key) {
-            SearchResult::Found(node) => {
-                return Some(core::mem::replace(
-                    unsafe { &mut (*node.as_ptr()).val },
-                    val,
-                ))
-            }
-            SearchResult::PotentialParentForInsertion(popt) => parent_option = popt,
-        }
-
-        let new_node = unsafe {
-            NonNull::new_unchecked(Box::into_raw(Box::new(Node {
-                parent: parent_option,
-                left: None,
-                right: None,
-                key,
+            Found(node) => Some(core::mem::replace(
+                unsafe { &mut (*node.as_ptr()).val },
                 val,
-                color: Color::Red,
-            })))
-        };
+            )),
+            PotentialParentForInsertion(parent_option) => {
+                let new_node = unsafe {
+                    NonNull::new_unchecked(Box::into_raw(Box::new(Node {
+                        parent: parent_option,
+                        left: None,
+                        right: None,
+                        key,
+                        val,
+                        color: Color::Red,
+                    })))
+                };
 
-        match parent_option {
-            Some(parent) => unsafe {
-                if (*new_node.as_ptr()).key < (*parent.as_ptr()).key {
-                    (*parent.as_ptr()).left = Some(new_node);
-                } else {
-                    (*parent.as_ptr()).right = Some(new_node);
+                match parent_option {
+                    Some(parent) => unsafe {
+                        if (*new_node.as_ptr()).key < (*parent.as_ptr()).key {
+                            (*parent.as_ptr()).left = Some(new_node);
+                        } else {
+                            (*parent.as_ptr()).right = Some(new_node);
+                        }
+                    },
+                    None => self.root = Some(new_node), // tree was empty
                 }
-            },
-            None => self.root = Some(new_node), // tree was empty
+
+                unsafe {
+                    self.insert_fixup(new_node);
+                }
+
+                self.len += 1;
+
+                None
+            }
         }
-
-        unsafe {
-            self.insert_fixup(new_node);
-        }
-
-        self.len += 1;
-
-        None
     }
 
     unsafe fn left_rotate(&mut self, node: NonNull<Node<K, V>>) {
@@ -478,7 +477,12 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        unimplemented!()
+        match self.search_tree(&key) {
+            PotentialParentForInsertion(_) => None,
+            Found(node) => {
+                todo!()
+            }
+        }
     }
 
     fn transplant(&mut self) {}
