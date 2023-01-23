@@ -25,6 +25,12 @@ pub struct RBTreeMap<K, V> {
     _marker: PhantomData<(K, V)>,
 }
 
+enum SearchResult<K, V> {
+    Found(NonNull<Node<K, V>>),
+    // option because insertion could be in an empty tree
+    PotentialParentForInsertion(Option<NonNull<Node<K, V>>>),
+}
+
 impl<K, V> RBTreeMap<K, V> {
     /// Makes a new, empty `RBTreeMap`.
     ///
@@ -68,6 +74,28 @@ impl<K, V> RBTreeMap<K, V> {
         unimplemented!()
     }
 
+    fn search_tree<Q>(&self, key: &Q) -> SearchResult<K, V>
+    where
+        K: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        let mut x = self.root;
+        let mut y = None;
+
+        while let Some(boxed_x) = x {
+            y = x;
+            unsafe {
+                match (*boxed_x.as_ptr()).key.borrow().cmp(key) {
+                    Ordering::Equal => return SearchResult::Found(boxed_x),
+                    Ordering::Greater => x = (*boxed_x.as_ptr()).left,
+                    Ordering::Less => x = (*boxed_x.as_ptr()).right,
+                }
+            }
+        }
+
+        SearchResult::PotentialParentForInsertion(y)
+    }
+
     /// Returns a reference to the value corresponding to the key.
     ///
     /// The key may be any borrowed form of the map's key type, but the ordering
@@ -90,7 +118,10 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        self.get_key_value(key).map(|(_key, val)| val)
+        match self.search_tree(key) {
+            SearchResult::Found(node) => Some(unsafe { &(*node.as_ptr()).val }),
+            SearchResult::PotentialParentForInsertion(_) => None,
+        }
     }
 
     /// Returns the key-value pair corresponding to the supplied key.
@@ -113,21 +144,12 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        let mut x = self.root;
-
-        while let Some(boxed_x) = x {
-            unsafe {
-                match (*boxed_x.as_ptr()).key.borrow().cmp(key) {
-                    Ordering::Equal => {
-                        return Some((&(*boxed_x.as_ptr()).key, &(*boxed_x.as_ptr()).val))
-                    }
-                    Ordering::Greater => x = (*boxed_x.as_ptr()).left,
-                    Ordering::Less => x = (*boxed_x.as_ptr()).right,
-                }
+        match self.search_tree(key) {
+            SearchResult::Found(node) => {
+                Some(unsafe { (&(*node.as_ptr()).key, &(*node.as_ptr()).val) })
             }
+            SearchResult::PotentialParentForInsertion(_) => None,
         }
-
-        None
     }
 
     /// Returns the first key-value pair in the map.
@@ -212,6 +234,37 @@ impl<K, V> RBTreeMap<K, V> {
         self.get(key).is_some()
     }
 
+    /// Returns a mutable reference to the value corresponding to the key.
+    ///
+    /// The key may be any borrowed form of the map's key type, but the ordering
+    /// on the borrowed form *must* match the ordering on the key type.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::new();
+    /// map.insert(1, "a");
+    /// if let Some(x) = map.get_mut(&1) {
+    ///     *x = "b";
+    /// }
+    /// assert_eq!(map[&1], "b");
+    /// ```
+    // See `get` for implementation notes, this is basically a copy-paste with mut's added
+    pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
+    where
+        K: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        match self.search_tree(key) {
+            SearchResult::Found(node) => Some(unsafe { &mut (*node.as_ptr()).val }),
+            SearchResult::PotentialParentForInsertion(_) => None,
+        }
+    }
+
     /// Inserts a key-value pair into the map.
     ///
     /// If the map did not have this key present, `None` is returned.
@@ -240,26 +293,20 @@ impl<K, V> RBTreeMap<K, V> {
     where
         K: Ord,
     {
-        let mut x = self.root;
-        let mut y = None;
-        while let Some(boxed_x) = x {
-            y = x;
-            unsafe {
-                match (*boxed_x.as_ptr()).key.cmp(&key) {
-                    Ordering::Equal => {
-                        // do not update the value of the key, just like std::collections:
-                        //
-                        return Some(core::mem::replace(&mut (*boxed_x.as_ptr()).val, val));
-                    }
-                    Ordering::Greater => x = (*boxed_x.as_ptr()).left,
-                    Ordering::Less => x = (*boxed_x.as_ptr()).right,
-                }
+        let parent_option;
+        match self.search_tree(&key) {
+            SearchResult::Found(node) => {
+                return Some(core::mem::replace(
+                    unsafe { &mut (*node.as_ptr()).val },
+                    val,
+                ))
             }
+            SearchResult::PotentialParentForInsertion(popt) => parent_option = popt,
         }
 
         let new_node = unsafe {
             NonNull::new_unchecked(Box::into_raw(Box::new(Node {
-                parent: y,
+                parent: parent_option,
                 left: None,
                 right: None,
                 key,
@@ -268,7 +315,7 @@ impl<K, V> RBTreeMap<K, V> {
             })))
         };
 
-        match y {
+        match parent_option {
             Some(parent) => unsafe {
                 if (*new_node.as_ptr()).key < (*parent.as_ptr()).key {
                     (*parent.as_ptr()).left = Some(new_node);
@@ -434,6 +481,8 @@ impl<K, V> RBTreeMap<K, V> {
         unimplemented!()
     }
 
+    fn transplant(&mut self) {}
+
     /// Returns the number of elements in the map.
     ///
     /// # Examples
@@ -468,6 +517,12 @@ impl<K, V> RBTreeMap<K, V> {
     /// ```
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+}
+
+impl<K, V> Default for RBTreeMap<K, V> {
+    fn default() -> RBTreeMap<K, V> {
+        Self::new()
     }
 }
 
