@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use core::ops::Index;
 use core::ptr::NonNull;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum Color {
     Red,
     Black,
@@ -147,11 +147,19 @@ impl<K, V> RBTreeMap<K, V> {
         Q: Ord + ?Sized,
     {
         match self.search_tree(key) {
-            Found(node) => {
-                Some(unsafe { (&(*node.as_ptr()).key, &(*node.as_ptr()).val) })
-            }
+            Found(node) => Some(unsafe { (&(*node.as_ptr()).key, &(*node.as_ptr()).val) }),
             PotentialParentForInsertion(_) => None,
         }
+    }
+
+    fn minimum(tree_root: NonNull<Node<K, V>>) -> NonNull<Node<K, V>> {
+        let mut x = Some(tree_root);
+        let mut y = tree_root;
+        while let Some(boxed_x) = x {
+            y = boxed_x;
+            x = unsafe { (*boxed_x.as_ptr()).left };
+        }
+        y
     }
 
     /// Returns the first key-value pair in the map.
@@ -174,13 +182,10 @@ impl<K, V> RBTreeMap<K, V> {
     where
         K: Ord,
     {
-        let mut x = self.root;
-        let mut y = None;
-        while let Some(boxed_x) = x {
-            y = x;
-            x = unsafe { (*boxed_x.as_ptr()).left };
-        }
-        y.map(|ptr| unsafe { (&(*ptr.as_ptr()).key, &(*ptr.as_ptr()).val) })
+        self.root.map(|root| {
+            let ptr = Self::minimum(root);
+            unsafe { (&(*ptr.as_ptr()).key, &(*ptr.as_ptr()).val) }
+        })
     }
 
     /// Returns the last key-value pair in the map.
@@ -477,15 +482,86 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        match self.search_tree(&key) {
-            PotentialParentForInsertion(_) => None,
-            Found(node) => {
-                todo!()
+        unsafe {
+            if let Found(z) = self.search_tree(&key) {
+                let mut y = z;
+                let mut y_original_color = (*y.as_ptr()).color;
+
+                let x;
+                match ((*z.as_ptr()).left, (*z.as_ptr()).right) {
+                    (None, right_child_option) => {
+                        x = right_child_option;
+                        self.transplant(z, right_child_option);
+                    }
+                    (left_child_option @ Some(_), None) => {
+                        x = left_child_option;
+                        self.transplant(z, left_child_option);
+                    }
+                    (
+                        left_child_option @ Some(left_child),
+                        right_child_option @ Some(right_child),
+                    ) => {
+                        y = Self::minimum(right_child);
+                        y_original_color = (*y.as_ptr()).color;
+
+                        x = (*y.as_ptr()).right;
+
+                        // y is farther down the tree
+                        if y != right_child {
+                            self.transplant(y, (*y.as_ptr()).right);
+                            (*y.as_ptr()).right = right_child_option;
+                            (*right_child.as_ptr()).parent = Some(y);
+                        } else {
+                            // x.p = y; // why?
+                        }
+
+                        self.transplant(z, Some(y));
+
+                        (*y.as_ptr()).left = left_child_option;
+                        (*left_child.as_ptr()).parent = Some(y);
+
+                        (*y.as_ptr()).color = (*z.as_ptr()).color;
+                    }
+                }
+
+                if y_original_color == Color::Black {
+                    self.remove_fixup(x);
+                }
+
+                self.len -= 1;
+
+                let boxed_node = Box::from_raw(z.as_ptr());
+                Some(boxed_node.val)
+            } else {
+                None
             }
         }
     }
 
-    fn transplant(&mut self) {}
+    unsafe fn remove_fixup(&mut self, _x: Option<NonNull<Node<K, V>>>) {
+        unimplemented!()
+    }
+
+    unsafe fn transplant(
+        &mut self,
+        to_replace: NonNull<Node<K, V>>,
+        replacement_option: Option<NonNull<Node<K, V>>>,
+    ) {
+        match (*to_replace.as_ptr()).parent {
+            Some(parent) => {
+                if Some(to_replace) == (*parent.as_ptr()).left {
+                    (*parent.as_ptr()).left = replacement_option;
+                } else {
+                    (*parent.as_ptr()).right = replacement_option;
+                }
+            }
+            None => self.root = replacement_option,
+        }
+
+        if let Some(replacement_node) = replacement_option {
+            (*replacement_node.as_ptr()).parent = (*to_replace.as_ptr()).parent;
+        }
+    }
 
     /// Returns the number of elements in the map.
     ///
