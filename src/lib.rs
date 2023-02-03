@@ -11,6 +11,7 @@ enum Color {
 }
 
 struct Node<K, V> {
+    // todo: store color with parent like in linux kernel
     parent: Option<NonNull<Node<K, V>>>,
     left: Option<NonNull<Node<K, V>>>,
     right: Option<NonNull<Node<K, V>>>,
@@ -81,21 +82,21 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        let mut x = self.root;
-        let mut y = None;
+        let mut node_option = self.root;
+        let mut parent_option = None;
 
-        while let Some(boxed_x) = x {
-            y = x;
+        while let Some(node) = node_option {
+            parent_option = node_option;
             unsafe {
-                match (*boxed_x.as_ptr()).key.borrow().cmp(key) {
-                    Ordering::Equal => return Found(boxed_x),
-                    Ordering::Greater => x = (*boxed_x.as_ptr()).left,
-                    Ordering::Less => x = (*boxed_x.as_ptr()).right,
+                match (*node.as_ptr()).key.borrow().cmp(key) {
+                    Ordering::Equal => return Found(node),
+                    Ordering::Greater => node_option = (*node.as_ptr()).left,
+                    Ordering::Less => node_option = (*node.as_ptr()).right,
                 }
             }
         }
 
-        PotentialParentForInsertion(y)
+        PotentialParentForInsertion(parent_option)
     }
 
     /// Returns a reference to the value corresponding to the key.
@@ -152,14 +153,11 @@ impl<K, V> RBTreeMap<K, V> {
         }
     }
 
-    fn minimum(tree_root: NonNull<Node<K, V>>) -> NonNull<Node<K, V>> {
-        let mut x = Some(tree_root);
-        let mut y = tree_root;
-        while let Some(boxed_x) = x {
-            y = boxed_x;
-            x = unsafe { (*boxed_x.as_ptr()).left };
+    fn first(mut node: NonNull<Node<K, V>>) -> NonNull<Node<K, V>> {
+        while let Some(left_node) = unsafe { (*node.as_ptr()).left } {
+            node = left_node;
         }
-        y
+        node
     }
 
     /// Returns the first key-value pair in the map.
@@ -183,9 +181,16 @@ impl<K, V> RBTreeMap<K, V> {
         K: Ord,
     {
         self.root.map(|root| {
-            let ptr = Self::minimum(root);
-            unsafe { (&(*ptr.as_ptr()).key, &(*ptr.as_ptr()).val) }
+            let first_node = Self::first(root);
+            unsafe { (&(*first_node.as_ptr()).key, &(*first_node.as_ptr()).val) }
         })
+    }
+
+    fn last(mut node: NonNull<Node<K, V>>) -> NonNull<Node<K, V>> {
+        while let Some(right_node) = unsafe { (*node.as_ptr()).right } {
+            node = right_node;
+        }
+        node
     }
 
     /// Returns the last key-value pair in the map.
@@ -207,13 +212,10 @@ impl<K, V> RBTreeMap<K, V> {
     where
         K: Ord,
     {
-        let mut x = self.root;
-        let mut y = None;
-        while let Some(boxed_x) = x {
-            y = x;
-            x = unsafe { (*boxed_x.as_ptr()).right };
-        }
-        y.map(|ptr| unsafe { (&(*ptr.as_ptr()).key, &(*ptr.as_ptr()).val) })
+        self.root.map(|root| {
+            let last_node = Self::last(root);
+            unsafe { (&(*last_node.as_ptr()).key, &(*last_node.as_ptr()).val) }
+        })
     }
 
     /// Returns `true` if the map contains a value for the specified key.
@@ -238,7 +240,7 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        self.get(key).is_some()
+        matches!(self.search_tree(key), Found(_))
     }
 
     /// Returns a mutable reference to the value corresponding to the key.
@@ -317,6 +319,7 @@ impl<K, V> RBTreeMap<K, V> {
                     })))
                 };
 
+                // update parent's left or right child to the new node
                 match parent_option {
                     Some(parent) => unsafe {
                         if (*new_node.as_ptr()).key < (*parent.as_ptr()).key {
@@ -342,9 +345,18 @@ impl<K, V> RBTreeMap<K, V> {
     unsafe fn left_rotate(&mut self, node: NonNull<Node<K, V>>) {
         // rotation is not possible if right child is empty
         if let Some(right_child) = (*node.as_ptr()).right {
+            //
+            //     g                  g
+            //     |                  |
+            //     n         -->     rc
+            //    / \                / \
+            //   lc  rc             n   rrgc
+            //      /  \           / \
+            //   rlgc  rrgc       lc rlgc
+            //
             (*node.as_ptr()).right = (*right_child.as_ptr()).left;
-            if let Some(right_left_child) = (*right_child.as_ptr()).left {
-                (*right_left_child.as_ptr()).parent = Some(node);
+            if let Some(right_left_gchild) = (*right_child.as_ptr()).left {
+                (*right_left_gchild.as_ptr()).parent = Some(node);
             }
 
             // right child's parent becomes node's parent
@@ -370,6 +382,15 @@ impl<K, V> RBTreeMap<K, V> {
     unsafe fn right_rotate(&mut self, node: NonNull<Node<K, V>>) {
         // rotation is not possible if left child is empty
         if let Some(left_child) = (*node.as_ptr()).left {
+            //
+            //         g                 g
+            //         |                 |
+            //         n       -->      lc
+            //        / \               / \
+            //       lc  rc          llgc  n
+            //      /  \                  / \
+            //   llgc  lrgc           lrgc   rc
+            //
             (*node.as_ptr()).left = (*left_child.as_ptr()).right;
             if let Some(left_right_child) = (*left_child.as_ptr()).right {
                 (*left_right_child.as_ptr()).parent = Some(node);
@@ -397,59 +418,98 @@ impl<K, V> RBTreeMap<K, V> {
 
     unsafe fn insert_fixup(&mut self, mut node: NonNull<Node<K, V>>) {
         while let Some(mut parent) = (*node.as_ptr()).parent {
+            // loop invariant: node is red
+
+            // if parent is black, we are done
             if (*parent.as_ptr()).color == Color::Black {
                 break;
             }
 
-            // since parent is red and root is always black,
-            // grandparent should exist
-            let grandparent = (*parent.as_ptr())
+            // since parent is red and root is always black, grandparent will exist
+            let gparent = (*parent.as_ptr())
                 .parent
                 .expect("where are you grandparent?");
 
-            if Some(parent) == (*grandparent.as_ptr()).left {
-                let uncle_option = (*grandparent.as_ptr()).right;
+            if Some(parent) == (*gparent.as_ptr()).left {
+                let uncle_option = (*gparent.as_ptr()).right;
                 match uncle_option {
-                    // both parent and uncle are red
                     Some(uncle) if (*uncle.as_ptr()).color == Color::Red => {
-                        // transfer grandparent's blackness one level down
+                        // case 1: node's uncle is red.
+                        //
+                        // action: flip colors
+                        //
+                        // indicate color with case: black is uppercase and red is lowercase
+                        //
+                        //       G            g
+                        //      / \          / \
+                        //     p   u  -->   P   U
+                        //    /            /
+                        //   n            n
+                        //
+                        // since g's parent might be red, need to recurse at g
                         (*parent.as_ptr()).color = Color::Black;
                         (*uncle.as_ptr()).color = Color::Black;
-                        (*grandparent.as_ptr()).color = Color::Red;
-                        node = grandparent;
+                        (*gparent.as_ptr()).color = Color::Red;
+                        node = gparent;
                     }
                     _ => {
                         if Some(node) == (*parent.as_ptr()).right {
-                            core::mem::swap(&mut node, &mut parent);
-                            self.left_rotate(node);
+                            // case 2: uncle is black (remember NULLs are also considered black)
+                            // and node is parent's right child
+                            //
+                            // action: left rotate at parent
+                            //
+                            //      G             G
+                            //     / \           / \
+                            //    p   U  -->    n   U
+                            //     \           /
+                            //      n         p
+                            //
+                            // fall through to caes 3 to fix red-property
+                            self.left_rotate(parent);
+                            parent = node;
                         }
 
+                        // case 3: uncle is black and node is parent's left child
+                        //
+                        // action: right rotate at grandparent
+                        //
+                        //        G           P
+                        //       / \         / \
+                        //      p   U  -->  n   g
+                        //     /                 \
+                        //    n                   U
+                        //
                         (*parent.as_ptr()).color = Color::Black;
-                        (*grandparent.as_ptr()).color = Color::Red;
-                        self.right_rotate(grandparent);
+                        (*gparent.as_ptr()).color = Color::Red;
+                        self.right_rotate(gparent);
+                        break;
                     }
                 }
             } else {
                 // same as if case but with "right" and "left" exchanged
-                let uncle_option = (*grandparent.as_ptr()).left;
+                let uncle_option = (*gparent.as_ptr()).left;
                 match uncle_option {
                     // both parent and uncle are red
                     Some(uncle) if (*uncle.as_ptr()).color == Color::Red => {
-                        // transfer grandparent's blackness one level down
+                        // case 1
                         (*parent.as_ptr()).color = Color::Black;
                         (*uncle.as_ptr()).color = Color::Black;
-                        (*grandparent.as_ptr()).color = Color::Red;
-                        node = grandparent;
+                        (*gparent.as_ptr()).color = Color::Red;
+                        node = gparent;
                     }
                     _ => {
                         if Some(node) == (*parent.as_ptr()).left {
-                            core::mem::swap(&mut node, &mut parent);
-                            self.right_rotate(node);
+                            // case 2
+                            self.right_rotate(parent);
+                            parent = node;
                         }
 
+                        // case 3
                         (*parent.as_ptr()).color = Color::Black;
-                        (*grandparent.as_ptr()).color = Color::Red;
-                        self.left_rotate(grandparent);
+                        (*gparent.as_ptr()).color = Color::Red;
+                        self.left_rotate(gparent);
+                        break;
                     }
                 }
             }
@@ -501,7 +561,7 @@ impl<K, V> RBTreeMap<K, V> {
                         left_child_option @ Some(left_child),
                         right_child_option @ Some(right_child),
                     ) => {
-                        y = Self::minimum(right_child);
+                        y = Self::first(right_child);
                         y_original_color = (*y.as_ptr()).color;
 
                         x = (*y.as_ptr()).right;
