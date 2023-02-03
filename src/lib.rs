@@ -543,63 +543,110 @@ impl<K, V> RBTreeMap<K, V> {
         Q: Ord + ?Sized,
     {
         unsafe {
-            if let Found(z) = self.search_tree(&key) {
-                let mut y = z;
-                let mut y_original_color = (*y.as_ptr()).color;
+            if let Found(node) = self.search_tree(&key) {
+                let mut rebalance = None;
 
-                let x;
-                match ((*z.as_ptr()).left, (*z.as_ptr()).right) {
+                match ((*node.as_ptr()).left, (*node.as_ptr()).right) {
                     (None, right_child_option) => {
-                        x = right_child_option;
-                        self.transplant(z, right_child_option);
+                        // case 1a: node to erase has only 1 child
+                        //
+                        // child must be red due to the black-property and
+                        // node must be black due to the red-property
+                        self.transplant(node, right_child_option);
+                        match right_child_option {
+                            Some(right_child) => {
+                                (*right_child.as_ptr()).color = Color::Black;
+                            }
+                            None => {
+                                // no children! need to rebalance only if the node is black
+                                if (*node.as_ptr()).color == Color::Black {
+                                    rebalance = (*node.as_ptr()).parent;
+                                }
+                            }
+                        }
                     }
-                    (left_child_option @ Some(_), None) => {
-                        x = left_child_option;
-                        self.transplant(z, left_child_option);
+                    (left_child_option @ Some(left_child), None) => {
+                        // case 1b: only 1 child, a left one
+                        self.transplant(node, left_child_option);
+                        (*left_child.as_ptr()).color = Color::Black;
                     }
                     (
                         left_child_option @ Some(left_child),
                         right_child_option @ Some(right_child),
                     ) => {
-                        y = Self::first(right_child);
-                        y_original_color = (*y.as_ptr()).color;
+                        let successor = Self::first(right_child);
+                        let successor_right_child_option = (*successor.as_ptr()).right;
 
-                        x = (*y.as_ptr()).right;
-
-                        // y is farther down the tree
-                        if y != right_child {
-                            self.transplant(y, (*y.as_ptr()).right);
-                            (*y.as_ptr()).right = right_child_option;
-                            (*right_child.as_ptr()).parent = Some(y);
+                        // new parent of successor's right child
+                        let successor_right_child_parent = if successor == right_child {
+                            // case 2: node's successor is its right child
+                            //
+                            //     (n)          (s)
+                            //     / \          / \
+                            //   (x) (s)  ->  (x) (c)
+                            //         \
+                            //         (c)
+                            //
+                            Some(successor)
                         } else {
-                            // x.p = y; // why?
+                            // case 3: node's successor is leftmost under it's right child subtree
+                            //
+                            //     (n)          (s)
+                            //     / \          / \
+                            //   (x) (y)  ->  (x) (y)
+                            //       /            /
+                            //     (p)          (p)
+                            //     /            /
+                            //   (s)          (c)
+                            //     \
+                            //     (c)
+                            //
+
+                            // replace successor by its right child
+                            self.transplant(successor, successor_right_child_option);
+
+                            // node's right child becomes successor's right child
+                            (*successor.as_ptr()).right = right_child_option;
+                            (*right_child.as_ptr()).parent = Some(successor);
+
+                            (*successor.as_ptr()).parent
+                        };
+
+                        // replace node by its successor
+                        self.transplant(node, Some(successor));
+
+                        // give node's left child to its successsor
+                        (*successor.as_ptr()).left = left_child_option;
+                        (*left_child.as_ptr()).parent = Some(successor);
+
+                        // give node's color to its successor
+                        (*successor.as_ptr()).color = (*node.as_ptr()).color;
+
+                        if let Some(successor_right_child) = successor_right_child_option {
+                            // successor's right child (only child) must be red due to the black-property and
+                            // successor must be black due to the red-property
+
+                            // give successor's right child the color of its parent
+                            (*successor_right_child.as_ptr()).color = Color::Black;
+                        } else if (*successor.as_ptr()).color == Color::Black {
+                            // need to rebalance only if successor has no child and is black
+                            rebalance = successor_right_child_parent;
                         }
-
-                        self.transplant(z, Some(y));
-
-                        (*y.as_ptr()).left = left_child_option;
-                        (*left_child.as_ptr()).parent = Some(y);
-
-                        (*y.as_ptr()).color = (*z.as_ptr()).color;
                     }
                 }
 
-                if y_original_color == Color::Black {
-                    self.remove_fixup(x);
+                if let Some(rebalance_node) = rebalance {
+                    self.remove_fixup(rebalance_node);
                 }
 
                 self.len -= 1;
 
-                let boxed_node = Box::from_raw(z.as_ptr());
+                let boxed_node = Box::from_raw(node.as_ptr());
                 Some(boxed_node.val)
             } else {
                 None
             }
         }
-    }
-
-    unsafe fn remove_fixup(&mut self, _x: Option<NonNull<Node<K, V>>>) {
-        unimplemented!()
     }
 
     unsafe fn transplant(
@@ -618,9 +665,13 @@ impl<K, V> RBTreeMap<K, V> {
             None => self.root = replacement_option,
         }
 
-        if let Some(replacement_node) = replacement_option {
-            (*replacement_node.as_ptr()).parent = (*to_replace.as_ptr()).parent;
+        if let Some(node) = replacement_option {
+            (*node.as_ptr()).parent = (*to_replace.as_ptr()).parent;
         }
+    }
+
+    unsafe fn remove_fixup(&mut self, x: NonNull<Node<K, V>>) {
+        unimplemented!()
     }
 
     /// Returns the number of elements in the map.
