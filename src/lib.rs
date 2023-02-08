@@ -20,6 +20,16 @@ struct Node<K, V> {
     color: Color,
 }
 
+impl<K, V> Node<K, V> {
+    fn is_black(&self) -> bool {
+        self.color == Color::Black
+    }
+
+    fn is_red(&self) -> bool {
+        self.color == Color::Red
+    }
+}
+
 pub struct RBTreeMap<K, V> {
     root: Option<NonNull<Node<K, V>>>,
     len: usize,
@@ -421,7 +431,7 @@ impl<K, V> RBTreeMap<K, V> {
             // loop invariant: node is red
 
             // if parent is black, we are done
-            if (*parent.as_ptr()).color == Color::Black {
+            if (*parent.as_ptr()).is_black() {
                 break;
             }
 
@@ -433,7 +443,7 @@ impl<K, V> RBTreeMap<K, V> {
             if Some(parent) == (*gparent.as_ptr()).left {
                 let uncle_option = (*gparent.as_ptr()).right;
                 match uncle_option {
-                    Some(uncle) if (*uncle.as_ptr()).color == Color::Red => {
+                    Some(uncle) if (*uncle.as_ptr()).is_red() => {
                         // case 1: node's uncle is red.
                         //
                         // action: flip colors
@@ -491,7 +501,7 @@ impl<K, V> RBTreeMap<K, V> {
                 let uncle_option = (*gparent.as_ptr()).left;
                 match uncle_option {
                     // both parent and uncle are red
-                    Some(uncle) if (*uncle.as_ptr()).color == Color::Red => {
+                    Some(uncle) if (*uncle.as_ptr()).is_red() => {
                         // case 1
                         (*parent.as_ptr()).color = Color::Black;
                         (*uncle.as_ptr()).color = Color::Black;
@@ -559,7 +569,7 @@ impl<K, V> RBTreeMap<K, V> {
                             }
                             None => {
                                 // no children! need to rebalance only if the node is black
-                                if (*node.as_ptr()).color == Color::Black {
+                                if (*node.as_ptr()).is_black() {
                                     rebalance = (*node.as_ptr()).parent;
                                 }
                             }
@@ -623,12 +633,12 @@ impl<K, V> RBTreeMap<K, V> {
                         (*successor.as_ptr()).color = (*node.as_ptr()).color;
 
                         if let Some(successor_right_child) = successor_right_child_option {
-                            // successor's right child (only child) must be red due to the black-property and
+                            // successor's right (and only) child must be red due to the black-property and
                             // successor must be black due to the red-property
 
-                            // give successor's right child the color of its parent
+                            // give successor's right child the color of the successor
                             (*successor_right_child.as_ptr()).color = Color::Black;
-                        } else if (*successor.as_ptr()).color == Color::Black {
+                        } else if (*successor.as_ptr()).is_black() {
                             // need to rebalance only if successor has no child and is black
                             rebalance = successor_right_child_parent;
                         }
@@ -670,8 +680,167 @@ impl<K, V> RBTreeMap<K, V> {
         }
     }
 
-    unsafe fn remove_fixup(&mut self, x: NonNull<Node<K, V>>) {
-        unimplemented!()
+    // only need to handle the no-childs case
+    unsafe fn remove_fixup(&mut self, mut parent: NonNull<Node<K, V>>) {
+        let mut node_option = None;
+        while node_option != self.root
+            && node_option.map_or(true, |node| (*node.as_ptr()).is_black())
+        {
+            if node_option == (*parent.as_ptr()).left {
+                // SAFETY: sibling must exist since all leaf paths going through
+                // parent and node have 1 less black node count
+                let mut sibling = (*parent.as_ptr()).right.expect("missing sibling");
+                if (*sibling.as_ptr()).is_red() {
+                    // case 1: node's sibling is red
+                    //
+                    // action: left rotate at parent
+                    //
+                    //     P               S
+                    //    / \             / \
+                    //   N   s    -->    p   Sr
+                    //      / \         / \
+                    //     Sl  Sr      N   Sl
+                    //
+                    (*sibling.as_ptr()).color = Color::Black;
+                    (*parent.as_ptr()).color = Color::Red;
+                    self.left_rotate(parent);
+                    // sibling must have black children, since the leaf paths through
+                    // parent and sibling hasn't had an extra black till now
+                    sibling = (*parent.as_ptr())
+                        .right
+                        .expect("red sibling must have black children");
+                }
+
+                let sibling_right_child_option = (*sibling.as_ptr()).right;
+                if sibling_right_child_option.map_or(true, |node| (*node.as_ptr()).is_black()) {
+                    let sibling_left_child_option = (*sibling.as_ptr()).left;
+                    if sibling_left_child_option.map_or(true, |node| (*node.as_ptr()).is_black()) {
+                        // case 2: sibling is black and both its children are black
+                        //
+                        // action: flip sibling's color
+                        //
+                        // (p could be either color here)
+                        //
+                        //    (p)           (p)
+                        //    / \           / \
+                        //   N   S    -->  N   s
+                        //      / \           / \
+                        //     Sl  Sr        Sl  Sr
+                        //
+                        // fix any black-property violation by flipping p to black
+                        // if it was red or by recursing at p.
+                        //
+                        (*sibling.as_ptr()).color = Color::Red;
+                        if (*parent.as_ptr()).is_red() {
+                            (*parent.as_ptr()).color = Color::Black;
+                        } else {
+                            node_option = Some(parent);
+                            if let Some(gparent) = (*parent.as_ptr()).parent {
+                                parent = gparent;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+
+                    // case 3: sibling is black, sibling's left child is red and right is black
+                    //
+                    // action: color flips & right rotate at sibling
+                    //
+                    //
+                    //    (p)           (p)
+                    //    / \           / \
+                    //   N   S    -->  N   Sl
+                    //      / \             \
+                    //     sl  Sr            s
+                    //                        \
+                    //                         Sr
+                    //
+
+                    // SAFETY: already checked sibling's left child for None and black
+                    let sibling_left_child =
+                        sibling_left_child_option.expect("sibling's left child empty!");
+                    (*sibling_left_child.as_ptr()).color = Color::Black;
+                    (*sibling.as_ptr()).color = Color::Red;
+                    self.right_rotate(sibling);
+                    // new sibling is original sibling's left child
+                    sibling = sibling_left_child;
+                }
+
+                // case 4: sibling is black, sibling's right child is red
+                //
+                // action: color flips and left rotate at parent
+                //
+                //
+                //     (p)             (s)
+                //     / \             / \
+                //    N   S     -->   P   Sr
+                //       / \         / \
+                //     (sl) sr      N  (sl)
+                //
+
+                // SAFETY: already checked sibling's right child for None and black
+                let sibling_right_child =
+                    sibling_right_child_option.expect("sibling's right child empty!");
+                (*sibling.as_ptr()).color = (*parent.as_ptr()).color;
+                (*parent.as_ptr()).color = Color::Black;
+                (*sibling_right_child.as_ptr()).color = Color::Black;
+
+                self.left_rotate(parent);
+                break;
+            } else {
+                // same as if case but with "right" and "left" exchanged
+
+                let mut sibling = (*parent.as_ptr()).left.expect("missing sibling");
+                if (*sibling.as_ptr()).is_red() {
+                    // case 1
+                    (*sibling.as_ptr()).color = Color::Black;
+                    (*parent.as_ptr()).color = Color::Red;
+                    self.right_rotate(parent);
+                    sibling = (*parent.as_ptr())
+                        .left
+                        .expect("red sibling must have black children");
+                }
+
+                let sibling_left_child_option = (*sibling.as_ptr()).left;
+                if sibling_left_child_option.map_or(true, |node| (*node.as_ptr()).is_black()) {
+                    let sibling_right_child_option = (*sibling.as_ptr()).right;
+                    if sibling_right_child_option.map_or(true, |node| (*node.as_ptr()).is_black()) {
+                        // case 2
+                        (*sibling.as_ptr()).color = Color::Red;
+                        if (*parent.as_ptr()).is_red() {
+                            (*parent.as_ptr()).color = Color::Black;
+                        } else {
+                            node_option = Some(parent);
+                            if let Some(gparent) = (*parent.as_ptr()).parent {
+                                parent = gparent;
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+
+                    // case 3
+                    let sibling_right_child =
+                        sibling_right_child_option.expect("sibling's right child empty!");
+                    (*sibling_right_child.as_ptr()).color = Color::Black;
+                    (*sibling.as_ptr()).color = Color::Red;
+                    self.left_rotate(sibling);
+                    sibling = sibling_right_child;
+                }
+
+                // case 4
+
+                let sibling_left_child =
+                    sibling_left_child_option.expect("sibling's left child empty!");
+                (*sibling.as_ptr()).color = (*parent.as_ptr()).color;
+                (*parent.as_ptr()).color = Color::Black;
+                (*sibling_left_child.as_ptr()).color = Color::Black;
+
+                self.right_rotate(parent);
+                break;
+            }
+        }
     }
 
     /// Returns the number of elements in the map.
