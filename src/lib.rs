@@ -534,6 +534,113 @@ impl<K, V> RBTreeMap<K, V> {
         (*self.root.expect("tree empty after insertion!").as_ptr()).color = Color::Black;
     }
 
+    unsafe fn remove_base<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        if let Found(node) = self.search_tree(key) {
+            let mut rebalance = None;
+
+            match ((*node.as_ptr()).left, (*node.as_ptr()).right) {
+                (None, right_child_option) => {
+                    // case 1a: node to erase has only 1 child
+                    //
+                    // child must be red due to the black-property and
+                    // node must be black due to the red-property
+                    self.transplant(node, right_child_option);
+                    match right_child_option {
+                        Some(right_child) => {
+                            (*right_child.as_ptr()).color = Color::Black;
+                        }
+                        None => {
+                            // no children! need to rebalance only if the node is black
+                            if (*node.as_ptr()).is_black() {
+                                rebalance = (*node.as_ptr()).parent;
+                            }
+                        }
+                    }
+                }
+                (left_child_option @ Some(left_child), None) => {
+                    // case 1b: only 1 child, a left one
+                    self.transplant(node, left_child_option);
+                    (*left_child.as_ptr()).color = Color::Black;
+                }
+                (left_child_option @ Some(left_child), right_child_option @ Some(right_child)) => {
+                    let successor = Self::first(right_child);
+                    let successor_right_child_option = (*successor.as_ptr()).right;
+
+                    // new parent of successor's right child
+                    let successor_right_child_parent = if successor == right_child {
+                        // case 2: node's successor is its right child
+                        //
+                        //     (n)          (s)
+                        //     / \          / \
+                        //   (x) (s)  ->  (x) (c)
+                        //         \
+                        //         (c)
+                        //
+                        Some(successor)
+                    } else {
+                        // case 3: node's successor is leftmost under it's right child subtree
+                        //
+                        //     (n)          (s)
+                        //     / \          / \
+                        //   (x) (y)  ->  (x) (y)
+                        //       /            /
+                        //     (p)          (p)
+                        //     /            /
+                        //   (s)          (c)
+                        //     \
+                        //     (c)
+                        //
+
+                        // replace successor by its right child
+                        self.transplant(successor, successor_right_child_option);
+
+                        // node's right child becomes successor's right child
+                        (*successor.as_ptr()).right = right_child_option;
+                        (*right_child.as_ptr()).parent = Some(successor);
+
+                        (*successor.as_ptr()).parent
+                    };
+
+                    // replace node by its successor
+                    self.transplant(node, Some(successor));
+
+                    // give node's left child to its successsor
+                    (*successor.as_ptr()).left = left_child_option;
+                    (*left_child.as_ptr()).parent = Some(successor);
+
+                    // give node's color to its successor
+                    (*successor.as_ptr()).color = (*node.as_ptr()).color;
+
+                    if let Some(successor_right_child) = successor_right_child_option {
+                        // successor's right (and only) child must be red due to the black-property and
+                        // successor must be black due to the red-property
+
+                        // give successor's right child the color of the successor
+                        (*successor_right_child.as_ptr()).color = Color::Black;
+                    } else if (*successor.as_ptr()).is_black() {
+                        // need to rebalance only if successor has no child and is black
+                        rebalance = successor_right_child_parent;
+                    }
+                }
+            }
+
+            if let Some(rebalance_node) = rebalance {
+                self.remove_fixup(rebalance_node);
+            }
+
+            self.len -= 1;
+
+            let boxed_node = Box::from_raw(node.as_ptr());
+            Some((boxed_node.key, boxed_node.val))
+        } else {
+            None
+        }
+    }
+
     /// Removes a key from the map, returning the value at the key if the key
     /// was previously in the map.
     ///
@@ -557,111 +664,7 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        unsafe {
-            if let Found(node) = self.search_tree(key) {
-                let mut rebalance = None;
-
-                match ((*node.as_ptr()).left, (*node.as_ptr()).right) {
-                    (None, right_child_option) => {
-                        // case 1a: node to erase has only 1 child
-                        //
-                        // child must be red due to the black-property and
-                        // node must be black due to the red-property
-                        self.transplant(node, right_child_option);
-                        match right_child_option {
-                            Some(right_child) => {
-                                (*right_child.as_ptr()).color = Color::Black;
-                            }
-                            None => {
-                                // no children! need to rebalance only if the node is black
-                                if (*node.as_ptr()).is_black() {
-                                    rebalance = (*node.as_ptr()).parent;
-                                }
-                            }
-                        }
-                    }
-                    (left_child_option @ Some(left_child), None) => {
-                        // case 1b: only 1 child, a left one
-                        self.transplant(node, left_child_option);
-                        (*left_child.as_ptr()).color = Color::Black;
-                    }
-                    (
-                        left_child_option @ Some(left_child),
-                        right_child_option @ Some(right_child),
-                    ) => {
-                        let successor = Self::first(right_child);
-                        let successor_right_child_option = (*successor.as_ptr()).right;
-
-                        // new parent of successor's right child
-                        let successor_right_child_parent = if successor == right_child {
-                            // case 2: node's successor is its right child
-                            //
-                            //     (n)          (s)
-                            //     / \          / \
-                            //   (x) (s)  ->  (x) (c)
-                            //         \
-                            //         (c)
-                            //
-                            Some(successor)
-                        } else {
-                            // case 3: node's successor is leftmost under it's right child subtree
-                            //
-                            //     (n)          (s)
-                            //     / \          / \
-                            //   (x) (y)  ->  (x) (y)
-                            //       /            /
-                            //     (p)          (p)
-                            //     /            /
-                            //   (s)          (c)
-                            //     \
-                            //     (c)
-                            //
-
-                            // replace successor by its right child
-                            self.transplant(successor, successor_right_child_option);
-
-                            // node's right child becomes successor's right child
-                            (*successor.as_ptr()).right = right_child_option;
-                            (*right_child.as_ptr()).parent = Some(successor);
-
-                            (*successor.as_ptr()).parent
-                        };
-
-                        // replace node by its successor
-                        self.transplant(node, Some(successor));
-
-                        // give node's left child to its successsor
-                        (*successor.as_ptr()).left = left_child_option;
-                        (*left_child.as_ptr()).parent = Some(successor);
-
-                        // give node's color to its successor
-                        (*successor.as_ptr()).color = (*node.as_ptr()).color;
-
-                        if let Some(successor_right_child) = successor_right_child_option {
-                            // successor's right (and only) child must be red due to the black-property and
-                            // successor must be black due to the red-property
-
-                            // give successor's right child the color of the successor
-                            (*successor_right_child.as_ptr()).color = Color::Black;
-                        } else if (*successor.as_ptr()).is_black() {
-                            // need to rebalance only if successor has no child and is black
-                            rebalance = successor_right_child_parent;
-                        }
-                    }
-                }
-
-                if let Some(rebalance_node) = rebalance {
-                    self.remove_fixup(rebalance_node);
-                }
-
-                self.len -= 1;
-
-                let boxed_node = Box::from_raw(node.as_ptr());
-                Some(boxed_node.val)
-            } else {
-                None
-            }
-        }
+        unsafe { self.remove_base(key).map(|(key, val)| val) }
     }
 
     unsafe fn transplant(
@@ -846,6 +849,32 @@ impl<K, V> RBTreeMap<K, V> {
                 break;
             }
         }
+    }
+
+    /// Removes a key from the map, returning the stored key and value if the key
+    /// was previously in the map.
+    ///
+    /// The key may be any borrowed form of the map's key type, but the ordering
+    /// on the borrowed form *must* match the ordering on the key type.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.remove_entry(&1), Some((1, "a")));
+    /// assert_eq!(map.remove_entry(&1), None);
+    /// ```
+    pub fn remove_entry<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    where
+        K: Borrow<Q> + Ord,
+        Q: Ord + ?Sized,
+    {
+        unsafe { self.remove_base(key) }
     }
 
     /// Returns the number of elements in the map.
