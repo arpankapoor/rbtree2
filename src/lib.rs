@@ -1,6 +1,7 @@
 use core::borrow::Borrow;
 use core::cmp::Ordering;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ops::Index;
 use core::ptr::NonNull;
 
@@ -84,7 +85,11 @@ impl<K, V> RBTreeMap<K, V> {
     /// assert!(a.is_empty());
     /// ```
     pub fn clear(&mut self) {
-        unimplemented!()
+        core::mem::drop(Self {
+            root: core::mem::replace(&mut self.root, None),
+            len: core::mem::replace(&mut self.len, 0),
+            _marker: PhantomData,
+        });
     }
 
     fn search_tree<Q>(&self, key: &Q) -> SearchResult<K, V>
@@ -553,7 +558,7 @@ impl<K, V> RBTreeMap<K, V> {
         Q: Ord + ?Sized,
     {
         unsafe {
-            if let Found(node) = self.search_tree(&key) {
+            if let Found(node) = self.search_tree(key) {
                 let mut rebalance = None;
 
                 match ((*node.as_ptr()).left, (*node.as_ptr()).right) {
@@ -900,5 +905,193 @@ where
     /// Panics if the key is not present in the `RBTreeMap`.
     fn index(&self, key: &Q) -> &V {
         self.get(key).expect("no entry found for key")
+    }
+}
+
+impl<K, V> Drop for RBTreeMap<K, V> {
+    fn drop(&mut self) {
+        core::mem::drop(unsafe { core::ptr::read(self) }.into_iter())
+    }
+}
+
+impl<K, V> IntoIterator for RBTreeMap<K, V> {
+    type Item = (K, V);
+    type IntoIter = IntoIter<K, V>;
+
+    fn into_iter(self) -> IntoIter<K, V> {
+        let me = ManuallyDrop::new(self);
+        let front = me.root.map(|root| Self::first(root));
+        let back = me.root.map(|root| Self::last(root));
+        IntoIter {
+            front,
+            back,
+            len: me.len,
+        }
+    }
+}
+
+pub struct IntoIter<K, V> {
+    front: Option<NonNull<Node<K, V>>>,
+    back: Option<NonNull<Node<K, V>>>,
+    len: usize,
+}
+
+impl<K, V> Drop for IntoIter<K, V> {
+    fn drop(&mut self) {
+        for _ in self.by_ref() {}
+    }
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+
+    fn next(&mut self) -> Option<(K, V)> {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.front.map(|node| {
+            // if we have a right child, go down and take the leftmost child
+            if let Some(right_child) = unsafe { (*node.as_ptr()).right } {
+                self.front = Some(RBTreeMap::first(right_child));
+                let parent_option = unsafe { (*node.as_ptr()).parent };
+                unsafe {
+                    (*right_child.as_ptr()).parent = parent_option;
+                }
+                if let Some(parent) = parent_option {
+                    unsafe {
+                        if Some(node) == (*parent.as_ptr()).left {
+                            (*parent.as_ptr()).left = Some(right_child);
+                        } else {
+                            (*parent.as_ptr()).right = Some(right_child);
+                        }
+                    }
+                }
+            } else {
+                self.front = None;
+                let mut curr = node;
+                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                    if unsafe { (*parent.as_ptr()).left } == Some(curr) {
+                        self.front = Some(parent);
+                        break;
+                    }
+                    curr = parent;
+                }
+            }
+            self.len -= 1;
+            let boxed_node = unsafe { Box::from_raw(node.as_ptr()) };
+            (boxed_node.key, boxed_node.val)
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<K, V> DoubleEndedIterator for IntoIter<K, V> {
+    fn next_back(&mut self) -> Option<(K, V)> {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.back.map(|node| {
+            if let Some(left_child) = unsafe { (*node.as_ptr()).left } {
+                self.back = Some(RBTreeMap::last(left_child));
+                let parent_option = unsafe { (*node.as_ptr()).parent };
+                unsafe { (*left_child.as_ptr()).parent = parent_option };
+                if let Some(parent) = parent_option {
+                    unsafe {
+                        if Some(node) == (*parent.as_ptr()).left {
+                            (*parent.as_ptr()).left = Some(left_child);
+                        } else {
+                            (*parent.as_ptr()).right = Some(left_child);
+                        }
+                    }
+                }
+            } else {
+                self.back = None;
+                let mut curr = node;
+                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                    if unsafe { (*parent.as_ptr()).right } == Some(curr) {
+                        self.back = Some(parent);
+                        break;
+                    }
+                    curr = parent;
+                }
+            }
+            self.len -= 1;
+            let boxed_node = unsafe { Box::from_raw(node.as_ptr()) };
+            (boxed_node.key, boxed_node.val)
+        })
+    }
+}
+
+impl<K, V> ExactSizeIterator for IntoIter<K, V> {
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<K, V> FromIterator<(K, V)> for RBTreeMap<K, V>
+where
+    K: Ord,
+{
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> RBTreeMap<K, V> {
+        let mut tree = Self::new();
+        for (key, val) in iter {
+            tree.insert(key, val);
+        }
+        tree
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::RBTreeMap;
+
+    // from https://github.com/rust-lang/rust/blob/master/library/alloc/src/collections/btree/map/tests.rs
+    #[test]
+    fn test_iter() {
+        // Miri is too slow
+        let size = if cfg!(miri) { 200 } else { 10000 };
+        let mut map = RBTreeMap::from_iter((0..size).map(|i| (i, i)));
+
+        fn test<T>(size: usize, mut iter: T)
+        where
+            T: Iterator<Item = (usize, usize)>,
+        {
+            for i in 0..size {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (i, i));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
+        }
+        //test(size, map.iter().map(|(&k, &v)| (k, v)));
+        //test(size, map.iter_mut().map(|(&k, &mut v)| (k, v)));
+        test(size, map.into_iter());
+    }
+
+    #[test]
+    fn test_iter_rev() {
+        // Miri is too slow
+        let size = if cfg!(miri) { 200 } else { 10000 };
+        let mut map = RBTreeMap::from_iter((0..size).map(|i| (i, i)));
+
+        fn test<T>(size: usize, mut iter: T)
+        where
+            T: Iterator<Item = (usize, usize)>,
+        {
+            for i in 0..size {
+                assert_eq!(iter.size_hint(), (size - i, Some(size - i)));
+                assert_eq!(iter.next().unwrap(), (size - i - 1, size - i - 1));
+            }
+            assert_eq!(iter.size_hint(), (0, Some(0)));
+            assert_eq!(iter.next(), None);
+        }
+        // test(size, map.iter().rev().map(|(&k, &v)| (k, v)));
+        // test(size, map.iter_mut().rev().map(|(&k, &mut v)| (k, v)));
+        test(size, map.into_iter().rev());
     }
 }
