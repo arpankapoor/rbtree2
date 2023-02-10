@@ -1,5 +1,6 @@
 use core::borrow::Borrow;
 use core::cmp::Ordering;
+use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ops::Index;
@@ -31,6 +32,9 @@ impl<K, V> Node<K, V> {
     }
 }
 
+/// An ordered map based on a [Red-Black Tree].
+///
+/// [Red-Black Tree]: https://en.wikipedia.org/wiki/Red-black_tree
 pub struct RBTreeMap<K, V> {
     root: Option<NonNull<Node<K, V>>>,
     len: usize,
@@ -44,6 +48,431 @@ enum SearchResult<K, V> {
 }
 
 use SearchResult::*;
+
+/// A view into a vacant entry in a `RBTreeMap`.
+/// It is part of the [`Entry`] enum.
+pub struct VacantEntry<'a, K, V> {
+    key: K,
+    potential_parent: Option<NonNull<Node<K, V>>>,
+    tree: &'a mut RBTreeMap<K, V>,
+}
+
+impl<'a, K, V> VacantEntry<'a, K, V>
+where
+    K: Ord,
+{
+    /// Gets a reference to the key that would be used when inserting a value
+    /// through the VacantEntry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// assert_eq!(map.entry("poneyland").key(), &"poneyland");
+    /// ```
+    pub fn key(&self) -> &K {
+        &self.key
+    }
+
+    /// Take ownership of the key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    ///
+    /// if let Entry::Vacant(v) = map.entry("poneyland") {
+    ///     v.into_key();
+    /// }
+    /// ```
+    pub fn into_key(self) -> K {
+        self.key
+    }
+
+    /// Sets the value of the entry with the `VacantEntry`'s key,
+    /// and returns a mutable reference to it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, u32> = RBTreeMap::new();
+    ///
+    /// if let Entry::Vacant(o) = map.entry("poneyland") {
+    ///     o.insert(37);
+    /// }
+    /// assert_eq!(map["poneyland"], 37);
+    /// ```
+    pub fn insert(self, value: V) -> &'a mut V {
+        let node = self
+            .tree
+            .insert_node(self.key, value, self.potential_parent);
+        unsafe { &mut (*node.as_ptr()).val }
+    }
+}
+
+impl<K: Debug + Ord, V> Debug for VacantEntry<'_, K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("VacantEntry").field(self.key()).finish()
+    }
+}
+
+/// A view into an occupied entry in a `RBTreeMap`.
+/// It is part of the [`Entry`] enum.
+pub struct OccupiedEntry<'a, K, V> {
+    node: NonNull<Node<K, V>>,
+    tree: &'a mut RBTreeMap<K, V>,
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V>
+where
+    K: Ord,
+{
+    /// Gets a reference to the key in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    /// assert_eq!(map.entry("poneyland").key(), &"poneyland");
+    /// ```
+    pub fn key(&self) -> &K {
+        unsafe { &(*self.node.as_ptr()).key }
+    }
+
+    /// Take ownership of the key and value from the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    ///
+    /// if let Entry::Occupied(o) = map.entry("poneyland") {
+    ///     // We delete the entry from the map.
+    ///     o.remove_entry();
+    /// }
+    ///
+    /// // If now try to get the value, it will panic:
+    /// // println!("{}", map["poneyland"]);
+    /// ```
+    pub fn remove_entry(self) -> (K, V) {
+        unsafe { self.tree.remove_node(self.node) }
+    }
+
+    /// Gets a reference to the value in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    ///
+    /// if let Entry::Occupied(o) = map.entry("poneyland") {
+    ///     assert_eq!(o.get(), &12);
+    /// }
+    /// ```
+    pub fn get(&self) -> &V {
+        unsafe { &(*self.node.as_ptr()).val }
+    }
+
+    /// Gets a mutable reference to the value in the entry.
+    ///
+    /// If you need a reference to the `OccupiedEntry` that may outlive the
+    /// destruction of the `Entry` value, see [`into_mut`].
+    ///
+    /// [`into_mut`]: OccupiedEntry::into_mut
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    ///
+    /// assert_eq!(map["poneyland"], 12);
+    /// if let Entry::Occupied(mut o) = map.entry("poneyland") {
+    ///     *o.get_mut() += 10;
+    ///     assert_eq!(*o.get(), 22);
+    ///
+    ///     // We can use the same Entry multiple times.
+    ///     *o.get_mut() += 2;
+    /// }
+    /// assert_eq!(map["poneyland"], 24);
+    /// ```
+    pub fn get_mut(&mut self) -> &mut V {
+        unsafe { &mut (*self.node.as_ptr()).val }
+    }
+
+    /// Converts the entry into a mutable reference to its value.
+    ///
+    /// If you need multiple references to the `OccupiedEntry`, see [`get_mut`].
+    ///
+    /// [`get_mut`]: OccupiedEntry::get_mut
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    ///
+    /// assert_eq!(map["poneyland"], 12);
+    /// if let Entry::Occupied(o) = map.entry("poneyland") {
+    ///     *o.into_mut() += 10;
+    /// }
+    /// assert_eq!(map["poneyland"], 22);
+    /// ```
+    pub fn into_mut(self) -> &'a mut V {
+        unsafe { &mut (*self.node.as_ptr()).val }
+    }
+
+    /// Sets the value of the entry with the `OccupiedEntry`'s key,
+    /// and returns the entry's old value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    ///
+    /// if let Entry::Occupied(mut o) = map.entry("poneyland") {
+    ///     assert_eq!(o.insert(15), 12);
+    /// }
+    /// assert_eq!(map["poneyland"], 15);
+    /// ```
+    pub fn insert(&mut self, value: V) -> V {
+        core::mem::replace(unsafe { &mut (*self.node.as_ptr()).val }, value)
+    }
+
+    /// Takes the value of the entry out of the map, and returns it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::{RBTreeMap, Entry};
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    ///
+    /// if let Entry::Occupied(o) = map.entry("poneyland") {
+    ///     assert_eq!(o.remove(), 12);
+    /// }
+    /// // If we try to get "poneyland"'s value, it'll panic:
+    /// // println!("{}", map["poneyland"]);
+    /// ```
+    pub fn remove(self) -> V {
+        self.remove_entry().1
+    }
+}
+
+impl<K: Debug + Ord, V: Debug> Debug for OccupiedEntry<'_, K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("OccupiedEntry")
+            .field("key", self.key())
+            .field("value", self.get())
+            .finish()
+    }
+}
+
+/// A view into a single entry in a map, which may either be vacant or occupied.
+///
+/// This `enum` is constructed from the [`entry`] method on [`RBTreeMap`].
+///
+/// [`entry`]: RBTreeMap::entry
+pub enum Entry<'a, K, V>
+where
+    K: 'a,
+    V: 'a,
+{
+    /// A vacant entry.
+    Vacant(VacantEntry<'a, K, V>),
+
+    /// An occupied entry.
+    Occupied(OccupiedEntry<'a, K, V>),
+}
+
+impl<'a, K, V> Entry<'a, K, V>
+where
+    K: Ord,
+{
+    /// Ensures a value is in the entry by inserting the default if empty, and returns
+    /// a mutable reference to the value in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// map.entry("poneyland").or_insert(12);
+    ///
+    /// assert_eq!(map["poneyland"], 12);
+    /// ```
+    pub fn or_insert(self, default: V) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting the result of the default function if empty,
+    /// and returns a mutable reference to the value in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, String> = RBTreeMap::new();
+    /// let s = "hoho".to_string();
+    ///
+    /// map.entry("poneyland").or_insert_with(|| s);
+    ///
+    /// assert_eq!(map["poneyland"], "hoho".to_string());
+    /// ```
+    pub fn or_insert_with<F>(self, default: F) -> &'a mut V
+    where
+        F: FnOnce() -> V,
+    {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(default()),
+        }
+    }
+
+    /// Ensures a value is in the entry by inserting, if empty, the result of the default function.
+    /// This method allows for generating key-derived values for insertion by providing the default
+    /// function a reference to the key that was moved during the `.entry(key)` method call.
+    ///
+    /// The reference to the moved key is provided so that cloning or copying the key is
+    /// unnecessary, unlike with `.or_insert_with(|| ... )`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    ///
+    /// map.entry("poneyland").or_insert_with_key(|key| key.chars().count());
+    ///
+    /// assert_eq!(map["poneyland"], 9);
+    /// ```
+    pub fn or_insert_with_key<F>(self, default: F) -> &'a mut V
+    where
+        F: FnOnce(&K) -> V,
+    {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let value = default(entry.key());
+                entry.insert(value)
+            }
+        }
+    }
+
+    /// Returns a reference to this entry's key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    /// assert_eq!(map.entry("poneyland").key(), &"poneyland");
+    /// ```
+    pub fn key(&self) -> &K {
+        match *self {
+            Entry::Occupied(ref entry) => entry.key(),
+            Entry::Vacant(ref entry) => entry.key(),
+        }
+    }
+
+    /// Provides in-place mutable access to an occupied entry before any
+    /// potential inserts into the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
+    ///
+    /// map.entry("poneyland")
+    ///    .and_modify(|e| { *e += 1 })
+    ///    .or_insert(42);
+    /// assert_eq!(map["poneyland"], 42);
+    ///
+    /// map.entry("poneyland")
+    ///    .and_modify(|e| { *e += 1 })
+    ///    .or_insert(42);
+    /// assert_eq!(map["poneyland"], 43);
+    /// ```
+    pub fn and_modify<F>(self, f: F) -> Entry<'a, K, V>
+    where
+        F: FnOnce(&mut V),
+    {
+        match self {
+            Entry::Occupied(mut entry) => {
+                f(entry.get_mut());
+                Entry::Occupied(entry)
+            }
+            Entry::Vacant(entry) => Entry::Vacant(entry),
+        }
+    }
+}
+
+impl<'a, K, V> Entry<'a, K, V>
+where
+    K: Ord,
+    V: Default,
+{
+    /// Ensures a value is in the entry by inserting the default value if empty,
+    /// and returns a mutable reference to the value in the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map: RBTreeMap<&str, Option<usize>> = RBTreeMap::new();
+    /// map.entry("poneyland").or_default();
+    ///
+    /// assert_eq!(map["poneyland"], None);
+    /// ```
+    pub fn or_default(self) -> &'a mut V {
+        match self {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(Default::default()),
+        }
+    }
+}
+
+impl<K: Debug + Ord, V: Debug> Debug for Entry<'_, K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Entry::Vacant(ref v) => f.debug_tuple("Entry").field(v).finish(),
+            Entry::Occupied(ref o) => f.debug_tuple("Entry").field(o).finish(),
+        }
+    }
+}
 
 impl<K, V> RBTreeMap<K, V> {
     /// Makes a new, empty `RBTreeMap`.
@@ -201,6 +630,60 @@ impl<K, V> RBTreeMap<K, V> {
         })
     }
 
+    /// Returns the first entry in the map for in-place manipulation.
+    /// The key of this entry is the minimum key in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// if let Some(mut entry) = map.first_entry() {
+    ///     if *entry.key() > 0 {
+    ///         entry.insert("first");
+    ///     }
+    /// }
+    /// assert_eq!(*map.get(&1).unwrap(), "first");
+    /// assert_eq!(*map.get(&2).unwrap(), "b");
+    /// ```
+    pub fn first_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
+    where
+        K: Ord,
+    {
+        self.root.map(|root| OccupiedEntry {
+            node: Self::first(root),
+            tree: self,
+        })
+    }
+
+    /// Removes and returns the first element in the map.
+    /// The key of this element is the minimum key that was in the map.
+    ///
+    /// # Examples
+    ///
+    /// Draining elements in ascending order, while keeping a usable map each iteration.
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// while let Some((key, _val)) = map.pop_first() {
+    ///     assert!(map.iter().all(|(k, _v)| *k > key));
+    /// }
+    /// assert!(map.is_empty());
+    /// ```
+    pub fn pop_first(&mut self) -> Option<(K, V)>
+    where
+        K: Ord,
+    {
+        self.first_entry().map(|entry| entry.remove_entry())
+    }
+
     fn last(mut node: NonNull<Node<K, V>>) -> NonNull<Node<K, V>> {
         while let Some(right_node) = unsafe { (*node.as_ptr()).right } {
             node = right_node;
@@ -231,6 +714,60 @@ impl<K, V> RBTreeMap<K, V> {
             let last_node = Self::last(root);
             unsafe { (&(*last_node.as_ptr()).key, &(*last_node.as_ptr()).val) }
         })
+    }
+
+    /// Returns the last entry in the map for in-place manipulation.
+    /// The key of this entry is the maximum key in the map.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// if let Some(mut entry) = map.last_entry() {
+    ///     if *entry.key() > 0 {
+    ///         entry.insert("last");
+    ///     }
+    /// }
+    /// assert_eq!(*map.get(&1).unwrap(), "a");
+    /// assert_eq!(*map.get(&2).unwrap(), "last");
+    /// ```
+    pub fn last_entry(&mut self) -> Option<OccupiedEntry<'_, K, V>>
+    where
+        K: Ord,
+    {
+        self.root.map(|root| OccupiedEntry {
+            node: Self::last(root),
+            tree: self,
+        })
+    }
+
+    /// Removes and returns the last element in the map.
+    /// The key of this element is the maximum key that was in the map.
+    ///
+    /// # Examples
+    ///
+    /// Draining elements in descending order, while keeping a usable map each iteration.
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::new();
+    /// map.insert(1, "a");
+    /// map.insert(2, "b");
+    /// while let Some((key, _val)) = map.pop_last() {
+    ///     assert!(map.iter().all(|(k, _v)| *k < key));
+    /// }
+    /// assert!(map.is_empty());
+    /// ```
+    pub fn pop_last(&mut self) -> Option<(K, V)>
+    where
+        K: Ord,
+    {
+        self.last_entry().map(|entry| entry.remove_entry())
     }
 
     /// Returns `true` if the map contains a value for the specified key.
@@ -289,6 +826,47 @@ impl<K, V> RBTreeMap<K, V> {
         }
     }
 
+    fn insert_node(
+        &mut self,
+        key: K,
+        val: V,
+        parent_option: Option<NonNull<Node<K, V>>>,
+    ) -> NonNull<Node<K, V>>
+    where
+        K: Ord,
+    {
+        let new_node = unsafe {
+            NonNull::new_unchecked(Box::into_raw(Box::new(Node {
+                parent: parent_option,
+                left: None,
+                right: None,
+                key,
+                val,
+                color: Color::Red,
+            })))
+        };
+
+        // update parent's left or right child to the new node
+        match parent_option {
+            Some(parent) => unsafe {
+                if (*new_node.as_ptr()).key < (*parent.as_ptr()).key {
+                    (*parent.as_ptr()).left = Some(new_node);
+                } else {
+                    (*parent.as_ptr()).right = Some(new_node);
+                }
+            },
+            None => self.root = Some(new_node), // tree was empty
+        }
+
+        unsafe {
+            self.insert_fixup(new_node);
+        }
+
+        self.len += 1;
+
+        new_node
+    }
+
     /// Inserts a key-value pair into the map.
     ///
     /// If the map did not have this key present, `None` is returned.
@@ -323,35 +901,7 @@ impl<K, V> RBTreeMap<K, V> {
                 val,
             )),
             PotentialParentForInsertion(parent_option) => {
-                let new_node = unsafe {
-                    NonNull::new_unchecked(Box::into_raw(Box::new(Node {
-                        parent: parent_option,
-                        left: None,
-                        right: None,
-                        key,
-                        val,
-                        color: Color::Red,
-                    })))
-                };
-
-                // update parent's left or right child to the new node
-                match parent_option {
-                    Some(parent) => unsafe {
-                        if (*new_node.as_ptr()).key < (*parent.as_ptr()).key {
-                            (*parent.as_ptr()).left = Some(new_node);
-                        } else {
-                            (*parent.as_ptr()).right = Some(new_node);
-                        }
-                    },
-                    None => self.root = Some(new_node), // tree was empty
-                }
-
-                unsafe {
-                    self.insert_fixup(new_node);
-                }
-
-                self.len += 1;
-
+                let _ = self.insert_node(key, val, parent_option);
                 None
             }
         }
@@ -534,111 +1084,107 @@ impl<K, V> RBTreeMap<K, V> {
         (*self.root.expect("tree empty after insertion!").as_ptr()).color = Color::Black;
     }
 
-    unsafe fn remove_base<Q>(&mut self, key: &Q) -> Option<(K, V)>
+    unsafe fn remove_node<Q>(&mut self, node: NonNull<Node<K, V>>) -> (K, V)
     where
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        if let Found(node) = self.search_tree(key) {
-            let mut rebalance = None;
+        let mut rebalance = None;
 
-            match ((*node.as_ptr()).left, (*node.as_ptr()).right) {
-                (None, right_child_option) => {
-                    // case 1a: node to erase has only 1 child
+        match ((*node.as_ptr()).left, (*node.as_ptr()).right) {
+            (None, right_child_option) => {
+                // case 1a: node to erase has only 1 child
+                //
+                // child must be red due to the black-property and
+                // node must be black due to the red-property
+                self.transplant(node, right_child_option);
+                match right_child_option {
+                    Some(right_child) => {
+                        (*right_child.as_ptr()).color = Color::Black;
+                    }
+                    None => {
+                        // no children! need to rebalance only if the node is black
+                        if (*node.as_ptr()).is_black() {
+                            rebalance = (*node.as_ptr()).parent;
+                        }
+                    }
+                }
+            }
+            (left_child_option @ Some(left_child), None) => {
+                // case 1b: only 1 child, a left one
+                self.transplant(node, left_child_option);
+                (*left_child.as_ptr()).color = Color::Black;
+            }
+            (left_child_option @ Some(left_child), right_child_option @ Some(right_child)) => {
+                let successor = Self::first(right_child);
+                let successor_right_child_option = (*successor.as_ptr()).right;
+
+                // new parent of successor's right child
+                let successor_right_child_parent = if successor == right_child {
+                    // case 2: node's successor is its right child
                     //
-                    // child must be red due to the black-property and
-                    // node must be black due to the red-property
-                    self.transplant(node, right_child_option);
-                    match right_child_option {
-                        Some(right_child) => {
-                            (*right_child.as_ptr()).color = Color::Black;
-                        }
-                        None => {
-                            // no children! need to rebalance only if the node is black
-                            if (*node.as_ptr()).is_black() {
-                                rebalance = (*node.as_ptr()).parent;
-                            }
-                        }
-                    }
-                }
-                (left_child_option @ Some(left_child), None) => {
-                    // case 1b: only 1 child, a left one
-                    self.transplant(node, left_child_option);
-                    (*left_child.as_ptr()).color = Color::Black;
-                }
-                (left_child_option @ Some(left_child), right_child_option @ Some(right_child)) => {
-                    let successor = Self::first(right_child);
-                    let successor_right_child_option = (*successor.as_ptr()).right;
+                    //     (n)          (s)
+                    //     / \          / \
+                    //   (x) (s)  ->  (x) (c)
+                    //         \
+                    //         (c)
+                    //
+                    Some(successor)
+                } else {
+                    // case 3: node's successor is leftmost under it's right child subtree
+                    //
+                    //     (n)          (s)
+                    //     / \          / \
+                    //   (x) (y)  ->  (x) (y)
+                    //       /            /
+                    //     (p)          (p)
+                    //     /            /
+                    //   (s)          (c)
+                    //     \
+                    //     (c)
+                    //
 
-                    // new parent of successor's right child
-                    let successor_right_child_parent = if successor == right_child {
-                        // case 2: node's successor is its right child
-                        //
-                        //     (n)          (s)
-                        //     / \          / \
-                        //   (x) (s)  ->  (x) (c)
-                        //         \
-                        //         (c)
-                        //
-                        Some(successor)
-                    } else {
-                        // case 3: node's successor is leftmost under it's right child subtree
-                        //
-                        //     (n)          (s)
-                        //     / \          / \
-                        //   (x) (y)  ->  (x) (y)
-                        //       /            /
-                        //     (p)          (p)
-                        //     /            /
-                        //   (s)          (c)
-                        //     \
-                        //     (c)
-                        //
+                    // replace successor by its right child
+                    self.transplant(successor, successor_right_child_option);
 
-                        // replace successor by its right child
-                        self.transplant(successor, successor_right_child_option);
+                    // node's right child becomes successor's right child
+                    (*successor.as_ptr()).right = right_child_option;
+                    (*right_child.as_ptr()).parent = Some(successor);
 
-                        // node's right child becomes successor's right child
-                        (*successor.as_ptr()).right = right_child_option;
-                        (*right_child.as_ptr()).parent = Some(successor);
+                    (*successor.as_ptr()).parent
+                };
 
-                        (*successor.as_ptr()).parent
-                    };
+                // replace node by its successor
+                self.transplant(node, Some(successor));
 
-                    // replace node by its successor
-                    self.transplant(node, Some(successor));
+                // give node's left child to its successsor
+                (*successor.as_ptr()).left = left_child_option;
+                (*left_child.as_ptr()).parent = Some(successor);
 
-                    // give node's left child to its successsor
-                    (*successor.as_ptr()).left = left_child_option;
-                    (*left_child.as_ptr()).parent = Some(successor);
+                // give node's color to its successor
+                (*successor.as_ptr()).color = (*node.as_ptr()).color;
 
-                    // give node's color to its successor
-                    (*successor.as_ptr()).color = (*node.as_ptr()).color;
+                if let Some(successor_right_child) = successor_right_child_option {
+                    // successor's right (and only) child must be red due to the black-property and
+                    // successor must be black due to the red-property
 
-                    if let Some(successor_right_child) = successor_right_child_option {
-                        // successor's right (and only) child must be red due to the black-property and
-                        // successor must be black due to the red-property
-
-                        // give successor's right child the color of the successor
-                        (*successor_right_child.as_ptr()).color = Color::Black;
-                    } else if (*successor.as_ptr()).is_black() {
-                        // need to rebalance only if successor has no child and is black
-                        rebalance = successor_right_child_parent;
-                    }
+                    // give successor's right child the color of the successor
+                    (*successor_right_child.as_ptr()).color = Color::Black;
+                } else if (*successor.as_ptr()).is_black() {
+                    // need to rebalance only if successor has no child and is black
+                    rebalance = successor_right_child_parent;
                 }
             }
-
-            if let Some(rebalance_node) = rebalance {
-                self.remove_fixup(rebalance_node);
-            }
-
-            self.len -= 1;
-
-            let boxed_node = Box::from_raw(node.as_ptr());
-            Some((boxed_node.key, boxed_node.val))
-        } else {
-            None
         }
+
+        if let Some(rebalance_node) = rebalance {
+            self.remove_fixup(rebalance_node);
+        }
+
+        self.len -= 1;
+
+        let boxed_node = Box::from_raw(node.as_ptr());
+        (boxed_node.key, boxed_node.val)
     }
 
     /// Removes a key from the map, returning the value at the key if the key
@@ -664,7 +1210,7 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        unsafe { self.remove_base(key).map(|(key, val)| val) }
+        self.remove_entry(key).map(|(_key, val)| val)
     }
 
     unsafe fn transplant(
@@ -874,7 +1420,44 @@ impl<K, V> RBTreeMap<K, V> {
         K: Borrow<Q> + Ord,
         Q: Ord + ?Sized,
     {
-        unsafe { self.remove_base(key) }
+        match self.search_tree(key) {
+            Found(node) => Some(unsafe { self.remove_node(node) }),
+            PotentialParentForInsertion(_) => None,
+        }
+    }
+
+    /// Gets the given key's corresponding entry in the map for in-place manipulation.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut count: RBTreeMap<&str, usize> = RBTreeMap::new();
+    ///
+    /// // count the number of occurrences of letters in the vec
+    /// for x in ["a", "b", "a", "c", "a", "b"] {
+    ///     count.entry(x).and_modify(|curr| *curr += 1).or_insert(1);
+    /// }
+    ///
+    /// assert_eq!(count["a"], 3);
+    /// assert_eq!(count["b"], 2);
+    /// assert_eq!(count["c"], 1);
+    /// ```
+    pub fn entry(&mut self, key: K) -> Entry<'_, K, V>
+    where
+        K: Ord,
+    {
+        match self.search_tree(&key) {
+            Found(node) => Entry::Occupied(OccupiedEntry { node, tree: self }),
+            PotentialParentForInsertion(parent_option) => Entry::Vacant(VacantEntry {
+                key,
+                potential_parent: parent_option,
+                tree: self,
+            }),
+        }
     }
 
     /// Returns the number of elements in the map.
