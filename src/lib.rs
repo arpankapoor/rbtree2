@@ -1,6 +1,7 @@
 use core::borrow::Borrow;
 use core::cmp::Ordering;
 use core::fmt::Debug;
+use core::iter::FusedIterator;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ops::Index;
@@ -13,7 +14,7 @@ enum Color {
 }
 
 struct Node<K, V> {
-    // todo: store color with parent like in linux kernel
+    // TODO: store color with parent like in linux kernel
     parent: Option<NonNull<Node<K, V>>>,
     left: Option<NonNull<Node<K, V>>>,
     right: Option<NonNull<Node<K, V>>>,
@@ -1460,6 +1461,57 @@ impl<K, V> RBTreeMap<K, V> {
         }
     }
 
+    /// Gets an iterator over the entries of the map, sorted by key.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::new();
+    /// map.insert(3, "c");
+    /// map.insert(2, "b");
+    /// map.insert(1, "a");
+    ///
+    /// for (key, value) in map.iter() {
+    ///     println!("{key}: {value}");
+    /// }
+    ///
+    /// let (first_key, first_value) = map.iter().next().unwrap();
+    /// assert_eq!((*first_key, *first_value), (1, "a"));
+    /// ```
+    pub fn iter(&self) -> Iter<'_, K, V> {
+        self.into_iter()
+    }
+
+    /// Gets a mutable iterator over the entries of the map, sorted by key.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut map = RBTreeMap::from([
+    ///    ("a", 1),
+    ///    ("b", 2),
+    ///    ("c", 3),
+    /// ]);
+    ///
+    /// // add 10 to the value if the key isn't "a"
+    /// for (key, value) in map.iter_mut() {
+    ///     if key != &"a" {
+    ///         *value += 10;
+    ///     }
+    /// }
+    /// ```
+    pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
+        self.into_iter()
+    }
+
     /// Returns the number of elements in the map.
     ///
     /// # Examples
@@ -1526,6 +1578,233 @@ impl<K, V> Drop for RBTreeMap<K, V> {
     }
 }
 
+impl<K: Debug, V: Debug> Debug for RBTreeMap<K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<K, V> FromIterator<(K, V)> for RBTreeMap<K, V>
+where
+    K: Ord,
+{
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> RBTreeMap<K, V> {
+        // TODO: collect, sort and create tree from sorted vec
+        let mut tree = Self::new();
+        for (key, val) in iter {
+            tree.insert(key, val);
+        }
+        tree
+    }
+}
+
+impl<K: Ord, V, const N: usize> From<[(K, V); N]> for RBTreeMap<K, V> {
+    /// Converts a `[(K, V); N]` into a `RBTreeMap<(K, V)>`.
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let map1 = RBTreeMap::from([(1, 2), (3, 4)]);
+    /// let map2: RBTreeMap<_, _> = [(1, 2), (3, 4)].into();
+    /// assert_eq!(map1, map2);
+    /// ```
+    fn from(arr: [(K, V); N]) -> RBTreeMap<K, V> {
+        Self::from_iter(arr)
+    }
+}
+
+impl<'a, K, V> IntoIterator for &'a RBTreeMap<K, V> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = Iter<'a, K, V>;
+
+    fn into_iter(self) -> Iter<'a, K, V> {
+        let front = self.root.map(|root| RBTreeMap::first(root));
+        let back = self.root.map(|root| RBTreeMap::last(root));
+        Iter {
+            front,
+            back,
+            len: self.len,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// An iterator over the entries of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`iter`] method on [`RBTreeMap`]. See its
+/// documentation for more.
+///
+/// [`iter`]: RBTreeMap::iter
+pub struct Iter<'a, K, V> {
+    front: Option<NonNull<Node<K, V>>>,
+    back: Option<NonNull<Node<K, V>>>,
+    len: usize,
+    _marker: PhantomData<(&'a K, &'a V)>,
+}
+
+impl<'a, K, V> Iterator for Iter<'a, K, V> {
+    type Item = (&'a K, &'a V);
+
+    fn next(&mut self) -> Option<(&'a K, &'a V)> {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.front.map(|node| {
+            if let Some(right_child) = unsafe { (*node.as_ptr()).right } {
+                self.front = Some(RBTreeMap::first(right_child));
+            } else {
+                self.front = None;
+                let mut curr = node;
+                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                    if unsafe { (*parent.as_ptr()).left } == Some(curr) {
+                        self.front = Some(parent);
+                        break;
+                    }
+                    curr = parent;
+                }
+            }
+
+            self.len -= 1;
+            unsafe { (&(*node.as_ptr()).key, &(*node.as_ptr()).val) }
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for Iter<'a, K, V> {
+    fn next_back(&mut self) -> Option<(&'a K, &'a V)> {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.back.map(|node| {
+            if let Some(left_child) = unsafe { (*node.as_ptr()).left } {
+                self.back = Some(RBTreeMap::last(left_child));
+            } else {
+                self.back = None;
+                let mut curr = node;
+                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                    if unsafe { (*parent.as_ptr()).right } == Some(curr) {
+                        self.back = Some(parent);
+                        break;
+                    }
+                    curr = parent;
+                }
+            }
+            self.len -= 1;
+            unsafe { (&(*node.as_ptr()).key, &(*node.as_ptr()).val) }
+        })
+    }
+}
+
+impl<'a, K, V> ExactSizeIterator for Iter<'a, K, V> {
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<'a, K, V> FusedIterator for Iter<'a, K, V> {}
+
+impl<'a, K, V> IntoIterator for &'a mut RBTreeMap<K, V> {
+    type Item = (&'a K, &'a mut V);
+    type IntoIter = IterMut<'a, K, V>;
+
+    fn into_iter(self) -> IterMut<'a, K, V> {
+        let front = self.root.map(|root| RBTreeMap::first(root));
+        let back = self.root.map(|root| RBTreeMap::last(root));
+        IterMut {
+            front,
+            back,
+            len: self.len,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// A mutable iterator over the entries of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`iter_mut`] method on [`RBTreeMap`]. See its
+/// documentation for more.
+///
+/// [`iter_mut`]: RBTreeMap::iter_mut
+pub struct IterMut<'a, K, V> {
+    front: Option<NonNull<Node<K, V>>>,
+    back: Option<NonNull<Node<K, V>>>,
+    len: usize,
+    _marker: PhantomData<(&'a K, &'a V)>,
+}
+
+impl<'a, K, V> Iterator for IterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<(&'a K, &'a mut V)> {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.front.map(|node| {
+            if let Some(right_child) = unsafe { (*node.as_ptr()).right } {
+                self.front = Some(RBTreeMap::first(right_child));
+            } else {
+                self.front = None;
+                let mut curr = node;
+                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                    if unsafe { (*parent.as_ptr()).left } == Some(curr) {
+                        self.front = Some(parent);
+                        break;
+                    }
+                    curr = parent;
+                }
+            }
+
+            self.len -= 1;
+            unsafe { (&(*node.as_ptr()).key, &mut (*node.as_ptr()).val) }
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for IterMut<'a, K, V> {
+    fn next_back(&mut self) -> Option<(&'a K, &'a mut V)> {
+        if self.len == 0 {
+            return None;
+        }
+
+        self.back.map(|node| {
+            if let Some(left_child) = unsafe { (*node.as_ptr()).left } {
+                self.back = Some(RBTreeMap::last(left_child));
+            } else {
+                self.back = None;
+                let mut curr = node;
+                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                    if unsafe { (*parent.as_ptr()).right } == Some(curr) {
+                        self.back = Some(parent);
+                        break;
+                    }
+                    curr = parent;
+                }
+            }
+            self.len -= 1;
+            unsafe { (&(*node.as_ptr()).key, &mut (*node.as_ptr()).val) }
+        })
+    }
+}
+
+impl<'a, K, V> ExactSizeIterator for IterMut<'a, K, V> {
+    fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<'a, K, V> FusedIterator for IterMut<'a, K, V> {}
+
 impl<K, V> IntoIterator for RBTreeMap<K, V> {
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
@@ -1542,6 +1821,13 @@ impl<K, V> IntoIterator for RBTreeMap<K, V> {
     }
 }
 
+/// An owning iterator over the entries of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`into_iter`] method on [`RBTreeMap`]
+/// (provided by the [`IntoIterator`] trait). See its documentation for more.
+///
+/// [`into_iter`]: IntoIterator::into_iter
+/// [`IntoIterator`]: core::iter::IntoIterator
 pub struct IntoIter<K, V> {
     front: Option<NonNull<Node<K, V>>>,
     back: Option<NonNull<Node<K, V>>>,
@@ -1645,18 +1931,7 @@ impl<K, V> ExactSizeIterator for IntoIter<K, V> {
     }
 }
 
-impl<K, V> FromIterator<(K, V)> for RBTreeMap<K, V>
-where
-    K: Ord,
-{
-    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> RBTreeMap<K, V> {
-        let mut tree = Self::new();
-        for (key, val) in iter {
-            tree.insert(key, val);
-        }
-        tree
-    }
-}
+impl<K, V> FusedIterator for IntoIter<K, V> {}
 
 #[cfg(test)]
 mod test {
@@ -1680,8 +1955,8 @@ mod test {
             assert_eq!(iter.size_hint(), (0, Some(0)));
             assert_eq!(iter.next(), None);
         }
-        //test(size, map.iter().map(|(&k, &v)| (k, v)));
-        //test(size, map.iter_mut().map(|(&k, &mut v)| (k, v)));
+        test(size, map.iter().map(|(&k, &v)| (k, v)));
+        test(size, map.iter_mut().map(|(&k, &mut v)| (k, v)));
         test(size, map.into_iter());
     }
 
@@ -1702,8 +1977,8 @@ mod test {
             assert_eq!(iter.size_hint(), (0, Some(0)));
             assert_eq!(iter.next(), None);
         }
-        // test(size, map.iter().rev().map(|(&k, &v)| (k, v)));
-        // test(size, map.iter_mut().rev().map(|(&k, &mut v)| (k, v)));
+        test(size, map.iter().rev().map(|(&k, &v)| (k, v)));
+        test(size, map.iter_mut().rev().map(|(&k, &mut v)| (k, v)));
         test(size, map.into_iter().rev());
     }
 }
