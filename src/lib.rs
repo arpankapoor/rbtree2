@@ -1513,6 +1513,50 @@ impl<K, V> RBTreeMap<K, V> {
         }
     }
 
+    /// Creates a consuming iterator visiting all the keys, in sorted order.
+    /// The map cannot be used after calling this.
+    /// The iterator element type is `K`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut a = RBTreeMap::new();
+    /// a.insert(2, "b");
+    /// a.insert(1, "a");
+    ///
+    /// let keys: Vec<i32> = a.into_keys().collect();
+    /// assert_eq!(keys, [1, 2]);
+    /// ```
+    pub fn into_keys(self) -> IntoKeys<K, V> {
+        IntoKeys {
+            inner: self.into_iter(),
+        }
+    }
+
+    /// Creates a consuming iterator visiting all the values, in order by key.
+    /// The map cannot be used after calling this.
+    /// The iterator element type is `V`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut a = RBTreeMap::new();
+    /// a.insert(1, "hello");
+    /// a.insert(2, "goodbye");
+    ///
+    /// let values: Vec<&str> = a.into_values().collect();
+    /// assert_eq!(values, ["hello", "goodbye"]);
+    /// ```
+    pub fn into_values(self) -> IntoValues<K, V> {
+        IntoValues {
+            inner: self.into_iter(),
+        }
+    }
+
     /// Gets an iterator over the entries of the map, sorted by key.
     ///
     /// # Examples
@@ -1562,6 +1606,73 @@ impl<K, V> RBTreeMap<K, V> {
     /// ```
     pub fn iter_mut(&mut self) -> IterMut<'_, K, V> {
         self.into_iter()
+    }
+
+    /// Gets an iterator over the keys of the map, in sorted order.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut a = RBTreeMap::new();
+    /// a.insert(2, "b");
+    /// a.insert(1, "a");
+    ///
+    /// let keys: Vec<_> = a.keys().cloned().collect();
+    /// assert_eq!(keys, [1, 2]);
+    /// ```
+    pub fn keys(&self) -> Keys<'_, K, V> {
+        Keys { inner: self.iter() }
+    }
+
+    /// Gets an iterator over the values of the map, in order by key.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut a = RBTreeMap::new();
+    /// a.insert(1, "hello");
+    /// a.insert(2, "goodbye");
+    ///
+    /// let values: Vec<&str> = a.values().cloned().collect();
+    /// assert_eq!(values, ["hello", "goodbye"]);
+    /// ```
+    pub fn values(&self) -> Values<'_, K, V> {
+        Values { inner: self.iter() }
+    }
+
+    /// Gets a mutable iterator over the values of the map, in order by key.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut a = RBTreeMap::new();
+    /// a.insert(1, String::from("hello"));
+    /// a.insert(2, String::from("goodbye"));
+    ///
+    /// for value in a.values_mut() {
+    ///     value.push_str("!");
+    /// }
+    ///
+    /// let values: Vec<String> = a.values().cloned().collect();
+    /// assert_eq!(values, [String::from("hello!"),
+    ///                     String::from("goodbye!")]);
+    /// ```
+    pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
+        ValuesMut {
+            inner: self.iter_mut(),
+        }
     }
 
     /// Returns the number of elements in the map.
@@ -1725,6 +1836,18 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.len, Some(self.len))
     }
+
+    fn last(mut self) -> Option<(&'a K, &'a V)> {
+        self.next_back()
+    }
+
+    fn min(mut self) -> Option<(&'a K, &'a V)> {
+        self.next()
+    }
+
+    fn max(mut self) -> Option<(&'a K, &'a V)> {
+        self.next_back()
+    }
 }
 
 impl<'a, K, V> DoubleEndedIterator for Iter<'a, K, V> {
@@ -1761,6 +1884,133 @@ impl<'a, K, V> ExactSizeIterator for Iter<'a, K, V> {
 
 impl<'a, K, V> FusedIterator for Iter<'a, K, V> {}
 
+impl<K, V> Clone for Iter<'_, K, V> {
+    fn clone(&self) -> Self {
+        Iter {
+            front: self.front.clone(),
+            back: self.back.clone(),
+            len: self.len,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// An iterator over the keys of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`keys`] method on [`RBTreeMap`]. See its
+/// documentation for more.
+///
+/// [`keys`]: RBTreeMap::keys
+pub struct Keys<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<K: Debug, V> Debug for Keys<'_, K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a, K, V> Iterator for Keys<'a, K, V> {
+    type Item = &'a K;
+
+    fn next(&mut self) -> Option<&'a K> {
+        self.inner.next().map(|(k, _)| k)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    fn last(mut self) -> Option<&'a K> {
+        self.next_back()
+    }
+
+    fn min(mut self) -> Option<&'a K> {
+        self.next()
+    }
+
+    fn max(mut self) -> Option<&'a K> {
+        self.next_back()
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for Keys<'a, K, V> {
+    fn next_back(&mut self) -> Option<&'a K> {
+        self.inner.next_back().map(|(k, _)| k)
+    }
+}
+
+impl<K, V> ExactSizeIterator for Keys<'_, K, V> {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+impl<K, V> FusedIterator for Keys<'_, K, V> {}
+
+impl<K, V> Clone for Keys<'_, K, V> {
+    fn clone(&self) -> Self {
+        Keys {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+/// An iterator over the values of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`values`] method on [`RBTreeMap`]. See its
+/// documentation for more.
+///
+/// [`values`]: RBTreeMap::values
+pub struct Values<'a, K, V> {
+    inner: Iter<'a, K, V>,
+}
+
+impl<K, V: Debug> Debug for Values<'_, K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
+impl<'a, K, V> Iterator for Values<'a, K, V> {
+    type Item = &'a V;
+
+    fn next(&mut self) -> Option<&'a V> {
+        self.inner.next().map(|(_, v)| v)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    fn last(mut self) -> Option<&'a V> {
+        self.next_back()
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for Values<'a, K, V> {
+    fn next_back(&mut self) -> Option<&'a V> {
+        self.inner.next_back().map(|(_, v)| v)
+    }
+}
+
+impl<K, V> ExactSizeIterator for Values<'_, K, V> {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+impl<K, V> FusedIterator for Values<'_, K, V> {}
+
+impl<K, V> Clone for Values<'_, K, V> {
+    fn clone(&self) -> Self {
+        Values {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 impl<'a, K, V> IntoIterator for &'a mut RBTreeMap<K, V> {
     type Item = (&'a K, &'a mut V);
     type IntoIter = IterMut<'a, K, V>;
@@ -1788,6 +2038,18 @@ pub struct IterMut<'a, K, V> {
     back: Option<NonNull<Node<K, V>>>,
     len: usize,
     _marker: PhantomData<(&'a K, &'a V)>,
+}
+
+impl<'a, K, V> IterMut<'a, K, V> {
+    /// Returns an iterator of references over the remaining items.
+    fn iter(&self) -> Iter<'_, K, V> {
+        Iter {
+            front: self.front.clone(),
+            back: self.back.clone(),
+            len: self.len,
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<'a, K, V> Iterator for IterMut<'a, K, V> {
@@ -1820,6 +2082,18 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.len, Some(self.len))
+    }
+
+    fn last(mut self) -> Option<(&'a K, &'a mut V)> {
+        self.next_back()
+    }
+
+    fn min(mut self) -> Option<(&'a K, &'a mut V)> {
+        self.next()
+    }
+
+    fn max(mut self) -> Option<(&'a K, &'a mut V)> {
+        self.next_back()
     }
 }
 
@@ -1857,6 +2131,54 @@ impl<'a, K, V> ExactSizeIterator for IterMut<'a, K, V> {
 
 impl<'a, K, V> FusedIterator for IterMut<'a, K, V> {}
 
+/// A mutable iterator over the values of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`values_mut`] method on [`RBTreeMap`]. See its
+/// documentation for more.
+///
+/// [`values_mut`]: RBTreeMap::values_mut
+pub struct ValuesMut<'a, K, V> {
+    inner: IterMut<'a, K, V>,
+}
+
+impl<K, V: Debug> Debug for ValuesMut<'_, K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list()
+            .entries(self.inner.iter().map(|(_, val)| val))
+            .finish()
+    }
+}
+
+impl<'a, K, V> Iterator for ValuesMut<'a, K, V> {
+    type Item = &'a mut V;
+
+    fn next(&mut self) -> Option<&'a mut V> {
+        self.inner.next().map(|(_, v)| v)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    fn last(mut self) -> Option<&'a mut V> {
+        self.next_back()
+    }
+}
+
+impl<'a, K, V> DoubleEndedIterator for ValuesMut<'a, K, V> {
+    fn next_back(&mut self) -> Option<&'a mut V> {
+        self.inner.next_back().map(|(_, v)| v)
+    }
+}
+
+impl<K, V> ExactSizeIterator for ValuesMut<'_, K, V> {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+impl<K, V> FusedIterator for ValuesMut<'_, K, V> {}
+
 impl<K, V> IntoIterator for RBTreeMap<K, V> {
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
@@ -1889,6 +2211,18 @@ pub struct IntoIter<K, V> {
 impl<K, V> Drop for IntoIter<K, V> {
     fn drop(&mut self) {
         for _ in self.by_ref() {}
+    }
+}
+
+impl<K, V> IntoIter<K, V> {
+    /// Returns an iterator of references over the remaining items.
+    fn iter(&self) -> Iter<'_, K, V> {
+        Iter {
+            front: self.front.clone(),
+            back: self.back.clone(),
+            len: self.len,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -1937,6 +2271,18 @@ impl<K, V> Iterator for IntoIter<K, V> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.len, Some(self.len))
     }
+
+    fn last(mut self) -> Option<(K, V)> {
+        self.next_back()
+    }
+
+    fn min(mut self) -> Option<(K, V)> {
+        self.next()
+    }
+
+    fn max(mut self) -> Option<(K, V)> {
+        self.next_back()
+    }
 }
 
 impl<K, V> DoubleEndedIterator for IntoIter<K, V> {
@@ -1984,6 +2330,118 @@ impl<K, V> ExactSizeIterator for IntoIter<K, V> {
 }
 
 impl<K, V> FusedIterator for IntoIter<K, V> {}
+
+/// An owning iterator over the keys of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`into_keys`] method on [`RBTreeMap`].
+/// See its documentation for more.
+///
+/// [`into_keys`]: RBTreeMap::into_keys
+pub struct IntoKeys<K, V> {
+    inner: IntoIter<K, V>,
+}
+
+impl<K: core::fmt::Debug, V> Debug for IntoKeys<K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list()
+            .entries(self.inner.iter().map(|(key, _)| key))
+            .finish()
+    }
+}
+
+impl<K, V> Iterator for IntoKeys<K, V> {
+    type Item = K;
+
+    fn next(&mut self) -> Option<K> {
+        self.inner.next().map(|(k, _)| k)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    fn last(mut self) -> Option<K> {
+        self.next_back()
+    }
+
+    fn min(mut self) -> Option<K> {
+        self.next()
+    }
+
+    fn max(mut self) -> Option<K> {
+        self.next_back()
+    }
+}
+
+impl<K, V> DoubleEndedIterator for IntoKeys<K, V> {
+    fn next_back(&mut self) -> Option<K> {
+        self.inner.next_back().map(|(k, _)| k)
+    }
+}
+
+impl<K, V> ExactSizeIterator for IntoKeys<K, V> {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+impl<K, V> FusedIterator for IntoKeys<K, V> {}
+
+/// An owning iterator over the values of a `RBTreeMap`.
+///
+/// This `struct` is created by the [`into_values`] method on [`RBTreeMap`].
+/// See its documentation for more.
+///
+/// [`into_values`]: RBTreeMap::into_values
+pub struct IntoValues<K, V> {
+    inner: IntoIter<K, V>,
+}
+
+impl<K, V: Debug> Debug for IntoValues<K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list()
+            .entries(self.inner.iter().map(|(_, val)| val))
+            .finish()
+    }
+}
+
+impl<K, V> Iterator for IntoValues<K, V> {
+    type Item = V;
+
+    fn next(&mut self) -> Option<V> {
+        self.inner.next().map(|(_, v)| v)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+
+    fn last(mut self) -> Option<V> {
+        self.next_back()
+    }
+
+    fn min(mut self) -> Option<V> {
+        self.next()
+    }
+
+    fn max(mut self) -> Option<V> {
+        self.next_back()
+    }
+}
+
+impl<K, V> DoubleEndedIterator for IntoValues<K, V> {
+    fn next_back(&mut self) -> Option<V> {
+        self.inner.next_back().map(|(_, v)| v)
+    }
+}
+
+impl<K, V> ExactSizeIterator for IntoValues<K, V> {
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+}
+
+impl<K, V> FusedIterator for IntoValues<K, V> {}
 
 #[cfg(test)]
 mod test {
