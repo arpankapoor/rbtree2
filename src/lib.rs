@@ -1427,6 +1427,58 @@ impl<K, V> RBTreeMap<K, V> {
         }
     }
 
+    /// Moves all elements from `other` into `self`, leaving `other` empty.
+    ///
+    /// If a key from `other` is already present in `self`, the respective
+    /// value from `self` will be overwritten with the respective value from `other`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rbtreemap::RBTreeMap;
+    ///
+    /// let mut a = RBTreeMap::new();
+    /// a.insert(1, "a");
+    /// a.insert(2, "b");
+    /// a.insert(3, "c"); // Note: Key (3) also present in b.
+    ///
+    /// let mut b = RBTreeMap::new();
+    /// b.insert(3, "d"); // Note: Key (3) also present in a.
+    /// b.insert(4, "e");
+    /// b.insert(5, "f");
+    ///
+    /// a.append(&mut b);
+    ///
+    /// assert_eq!(a.len(), 5);
+    /// assert_eq!(b.len(), 0);
+    ///
+    /// assert_eq!(a[&1], "a");
+    /// assert_eq!(a[&2], "b");
+    /// assert_eq!(a[&3], "d"); // Note: "c" has been overwritten.
+    /// assert_eq!(a[&4], "e");
+    /// assert_eq!(a[&5], "f");
+    /// ```
+    pub fn append(&mut self, other: &mut Self)
+    where
+        K: Ord,
+    {
+        if other.is_empty() {
+            return;
+        }
+
+        // swap self and other if self is empty.
+        if self.is_empty() {
+            core::mem::swap(self, other);
+            return;
+        }
+
+        let other_iter = core::mem::replace(other, Self::new()).into_iter();
+        // TODO: replace with the sorted insert once we have that
+        for (key, val) in other_iter {
+            self.insert(key, val);
+        }
+    }
+
     /// Gets the given key's corresponding entry in the map for in-place manipulation.
     ///
     /// # Examples
