@@ -2017,8 +2017,8 @@ impl<'a, K, V> FusedIterator for Iter<'a, K, V> {}
 impl<K, V> Clone for Iter<'_, K, V> {
     fn clone(&self) -> Self {
         Iter {
-            front: self.front.clone(),
-            back: self.back.clone(),
+            front: self.front,
+            back: self.back,
             len: self.len,
             _marker: PhantomData,
         }
@@ -2174,8 +2174,8 @@ impl<'a, K, V> IterMut<'a, K, V> {
     /// Returns an iterator of references over the remaining items.
     fn iter(&self) -> Iter<'_, K, V> {
         Iter {
-            front: self.front.clone(),
-            back: self.back.clone(),
+            front: self.front,
+            back: self.back,
             len: self.len,
             _marker: PhantomData,
         }
@@ -2358,8 +2358,8 @@ impl<K, V> IntoIter<K, V> {
     /// Returns an iterator of references over the remaining items.
     fn iter(&self) -> Iter<'_, K, V> {
         Iter {
-            front: self.front.clone(),
-            back: self.back.clone(),
+            front: self.front,
+            back: self.back,
             len: self.len,
             _marker: PhantomData,
         }
