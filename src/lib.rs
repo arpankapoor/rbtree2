@@ -1,6 +1,8 @@
 use core::borrow::Borrow;
 use core::cmp::Ordering;
 use core::fmt::Debug;
+use core::hash::Hash;
+use core::hash::Hasher;
 use core::iter::FusedIterator;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
@@ -1712,6 +1714,53 @@ impl<K, V> RBTreeMap<K, V> {
     }
 }
 
+impl<K, V> Clone for RBTreeMap<K, V>
+where
+    K: Clone,
+    V: Clone,
+{
+    fn clone(&self) -> RBTreeMap<K, V> {
+        fn clone_subtree<K: Clone, V: Clone>(node: NonNull<Node<K, V>>) -> NonNull<Node<K, V>> {
+            let new_node = unsafe {
+                NonNull::new_unchecked(Box::into_raw(Box::new(Node {
+                    parent: None,
+                    left: None,
+                    right: None,
+                    key: (*node.as_ptr()).key.clone(),
+                    val: (*node.as_ptr()).val.clone(),
+                    color: (*node.as_ptr()).color,
+                })))
+            };
+
+            if let Some(left_subtree) = unsafe { (*node.as_ptr()).left } {
+                let new_left_subtree = clone_subtree(left_subtree);
+                unsafe {
+                    (*new_left_subtree.as_ptr()).parent = Some(new_node);
+                    (*new_node.as_ptr()).left = Some(new_left_subtree);
+                }
+            }
+            if let Some(right_subtree) = unsafe { (*node.as_ptr()).right } {
+                let new_right_subtree = clone_subtree(right_subtree);
+                unsafe {
+                    (*new_right_subtree.as_ptr()).parent = Some(new_node);
+                    (*new_node.as_ptr()).right = Some(new_right_subtree);
+                }
+            }
+            new_node
+        }
+
+        if self.is_empty() {
+            Self::new()
+        } else {
+            Self {
+                root: Some(clone_subtree(self.root.unwrap())),
+                len: self.len,
+                _marker: PhantomData,
+            }
+        }
+    }
+}
+
 impl<K, V> Default for RBTreeMap<K, V> {
     fn default() -> RBTreeMap<K, V> {
         Self::new()
@@ -1744,6 +1793,77 @@ impl<K, V> Drop for RBTreeMap<K, V> {
 impl<K: Debug, V: Debug> Debug for RBTreeMap<K, V> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl<K, V> PartialEq for RBTreeMap<K, V>
+where
+    K: PartialEq,
+    V: PartialEq,
+{
+    fn eq(&self, other: &RBTreeMap<K, V>) -> bool {
+        self.len() == other.len() && self.iter().zip(other).all(|(a, b)| a == b)
+    }
+}
+
+impl<K, V> Eq for RBTreeMap<K, V>
+where
+    K: Eq,
+    V: Eq,
+{
+}
+
+impl<K, V> PartialOrd for RBTreeMap<K, V>
+where
+    K: PartialOrd,
+    V: PartialOrd,
+{
+    fn partial_cmp(&self, other: &RBTreeMap<K, V>) -> Option<Ordering> {
+        self.iter().partial_cmp(other.iter())
+    }
+}
+
+impl<K, V> Ord for RBTreeMap<K, V>
+where
+    K: Ord,
+    V: Ord,
+{
+    fn cmp(&self, other: &RBTreeMap<K, V>) -> Ordering {
+        self.iter().cmp(other.iter())
+    }
+}
+
+impl<K, V> Extend<(K, V)> for RBTreeMap<K, V>
+where
+    K: Ord,
+{
+    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+        iter.into_iter().for_each(move |(k, v)| {
+            self.insert(k, v);
+        });
+    }
+}
+
+impl<'a, K, V> Extend<(&'a K, &'a V)> for RBTreeMap<K, V>
+where
+    K: Ord + Copy,
+    V: Copy,
+{
+    fn extend<I: IntoIterator<Item = (&'a K, &'a V)>>(&mut self, iter: I) {
+        self.extend(iter.into_iter().map(|(&key, &value)| (key, value)));
+    }
+}
+
+impl<K, V> Hash for RBTreeMap<K, V>
+where
+    K: Hash,
+    V: Hash,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_usize(self.len());
+        for elt in self {
+            elt.hash(state);
+        }
     }
 }
 
@@ -2490,5 +2610,20 @@ mod test {
         test(size, map.iter().rev().map(|(&k, &v)| (k, v)));
         test(size, map.iter_mut().rev().map(|(&k, &mut v)| (k, v)));
         test(size, map.into_iter().rev());
+    }
+
+    // from https://github.com/tickbh/rbtree-rs/blob/master/src/lib.rs#L1437
+    #[test]
+    fn test_clone() {
+        // Miri is too slow
+        let size = if cfg!(miri) { 200 } else { 10000 };
+        let mut map = RBTreeMap::from_iter((0..size).map(|i| (i, i)));
+
+        let map2 = map.clone();
+        let map3 = map.clone();
+
+        map.clear();
+        assert_eq!(map2, map3);
+        assert_eq!(map2.len(), size as usize);
     }
 }
