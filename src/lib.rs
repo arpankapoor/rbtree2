@@ -1925,6 +1925,16 @@ pub struct Iter<'a, K, V> {
     _marker: PhantomData<(&'a K, &'a V)>,
 }
 
+impl<K, V> Debug for Iter<'_, K, V>
+where
+    K: Debug,
+    V: Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.clone()).finish()
+    }
+}
+
 impl<'a, K, V> Iterator for Iter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
@@ -2172,6 +2182,16 @@ impl<'a, K, V> IterMut<'a, K, V> {
     }
 }
 
+impl<K, V> Debug for IterMut<'_, K, V>
+where
+    K: Debug,
+    V: Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
 impl<'a, K, V> Iterator for IterMut<'a, K, V> {
     type Item = (&'a K, &'a mut V);
 
@@ -2343,6 +2363,16 @@ impl<K, V> IntoIter<K, V> {
             len: self.len,
             _marker: PhantomData,
         }
+    }
+}
+
+impl<K, V> Debug for IntoIter<K, V>
+where
+    K: Debug,
+    V: Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
