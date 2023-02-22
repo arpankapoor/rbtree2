@@ -112,7 +112,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// assert_eq!(map.entry("poneyland").key(), &"poneyland");
@@ -126,7 +126,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     ///
@@ -144,7 +144,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, u32> = RBTreeMap::new();
     ///
@@ -183,7 +183,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -198,7 +198,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -220,7 +220,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -243,7 +243,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -271,7 +271,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -292,7 +292,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -311,7 +311,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::{RBTreeMap, Entry};
+    /// use rbtree2::{RBTreeMap, Entry};
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -363,7 +363,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// map.entry("poneyland").or_insert(12);
@@ -383,7 +383,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, String> = RBTreeMap::new();
     /// let s = "hoho".to_string();
@@ -412,7 +412,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     ///
@@ -438,7 +438,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     /// assert_eq!(map.entry("poneyland").key(), &"poneyland");
@@ -456,7 +456,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, usize> = RBTreeMap::new();
     ///
@@ -495,7 +495,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map: RBTreeMap<&str, Option<usize>> = RBTreeMap::new();
     /// map.entry("poneyland").or_default();
@@ -529,7 +529,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     ///
@@ -551,7 +551,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// a.insert(1, "a");
@@ -598,7 +598,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -624,7 +624,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -657,7 +657,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// assert_eq!(map.first_key_value(), None);
@@ -681,7 +681,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -712,7 +712,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Draining elements in ascending order, while keeping a usable map each iteration.
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -744,7 +744,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "b");
@@ -767,7 +767,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -798,7 +798,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Draining elements in descending order, while keeping a usable map each iteration.
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -825,7 +825,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -850,7 +850,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -924,7 +924,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// assert_eq!(map.insert(37, "a"), None);
@@ -1241,7 +1241,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -1451,7 +1451,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(1, "a");
@@ -1477,7 +1477,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// a.insert(1, "a");
@@ -1528,7 +1528,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut count: RBTreeMap<&str, usize> = RBTreeMap::new();
     ///
@@ -1562,7 +1562,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// a.insert(2, "b");
@@ -1584,7 +1584,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// a.insert(1, "hello");
@@ -1606,7 +1606,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::new();
     /// map.insert(3, "c");
@@ -1631,7 +1631,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut map = RBTreeMap::from([
     ///    ("a", 1),
@@ -1657,7 +1657,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// a.insert(2, "b");
@@ -1677,7 +1677,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// a.insert(1, "hello");
@@ -1697,7 +1697,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// a.insert(1, String::from("hello"));
@@ -1724,7 +1724,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// assert_eq!(a.len(), 0);
@@ -1742,7 +1742,7 @@ impl<K, V> RBTreeMap<K, V> {
     /// Basic usage:
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let mut a = RBTreeMap::new();
     /// assert!(a.is_empty());
@@ -1925,7 +1925,7 @@ impl<K: Ord, V, const N: usize> From<[(K, V); N]> for RBTreeMap<K, V> {
     /// Converts a `[(K, V); N]` into a `RBTreeMap<(K, V)>`.
     ///
     /// ```
-    /// use rbtreemap::RBTreeMap;
+    /// use rbtree2::RBTreeMap;
     ///
     /// let map1 = RBTreeMap::from([(1, 2), (3, 4)]);
     /// let map2: RBTreeMap<_, _> = [(1, 2), (3, 4)].into();
