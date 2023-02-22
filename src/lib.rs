@@ -9,29 +9,71 @@ use core::mem::ManuallyDrop;
 use core::ops::Index;
 use core::ptr::NonNull;
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[repr(usize)]
 enum Color {
-    Red,
-    Black,
+    Red = 0,
+    Black = 1,
 }
 
 struct Node<K, V> {
-    // TODO: store color with parent like in linux kernel
-    parent: Option<NonNull<Node<K, V>>>,
+    parent_color: usize,
     left: Option<NonNull<Node<K, V>>>,
     right: Option<NonNull<Node<K, V>>>,
     key: K,
     val: V,
-    color: Color,
 }
 
 impl<K, V> Node<K, V> {
+    fn new(parent_option: Option<NonNull<Node<K, V>>>, color: Color, key: K, val: V) -> Self {
+        Self {
+            parent_color: match parent_option {
+                Some(parent) => color as usize | parent.as_ptr() as usize,
+                None => color as usize | core::ptr::null::<Node<K, V>>() as usize,
+            },
+            left: None,
+            right: None,
+            key,
+            val,
+        }
+    }
+
     fn is_black(&self) -> bool {
-        self.color == Color::Black
+        self.get_color_raw() == (Color::Black as usize)
     }
 
     fn is_red(&self) -> bool {
-        self.color == Color::Red
+        self.get_color_raw() == (Color::Red as usize)
+    }
+
+    fn get_color_raw(&self) -> usize {
+        self.parent_color & 1
+    }
+
+    fn get_parent_raw(&self) -> usize {
+        self.parent_color & !1
+    }
+
+    fn get_parent(&self) -> Option<NonNull<Node<K, V>>> {
+        NonNull::new(self.get_parent_raw() as *mut Node<K, V>)
+    }
+
+    fn set_color(&mut self, color: Color) {
+        self.parent_color = color as usize | self.get_parent_raw();
+    }
+
+    fn set_color_from_node(&mut self, node: NonNull<Node<K, V>>) {
+        self.parent_color = unsafe { (*node.as_ptr()).get_color_raw() } | self.get_parent_raw();
+    }
+
+    fn set_parent(&mut self, parent_option: Option<NonNull<Node<K, V>>>) {
+        self.parent_color = match parent_option {
+            Some(parent) => self.get_color_raw() | parent.as_ptr() as usize,
+            None => self.get_color_raw() | core::ptr::null::<Node<K, V>>() as usize,
+        }
+    }
+
+    fn set_parent_from_node(&mut self, node: NonNull<Node<K, V>>) {
+        self.parent_color = self.get_color_raw() | unsafe { (*node.as_ptr()).get_parent_raw() };
     }
 }
 
@@ -839,14 +881,12 @@ impl<K, V> RBTreeMap<K, V> {
         K: Ord,
     {
         let new_node = unsafe {
-            NonNull::new_unchecked(Box::into_raw(Box::new(Node {
-                parent: parent_option,
-                left: None,
-                right: None,
+            NonNull::new_unchecked(Box::into_raw(Box::new(Node::new(
+                parent_option,
+                Color::Red,
                 key,
                 val,
-                color: Color::Red,
-            })))
+            ))))
         };
 
         // update parent's left or right child to the new node
@@ -924,13 +964,13 @@ impl<K, V> RBTreeMap<K, V> {
             //
             (*node.as_ptr()).right = (*right_child.as_ptr()).left;
             if let Some(right_left_gchild) = (*right_child.as_ptr()).left {
-                (*right_left_gchild.as_ptr()).parent = Some(node);
+                (*right_left_gchild.as_ptr()).set_parent(Some(node));
             }
 
             // right child's parent becomes node's parent
-            (*right_child.as_ptr()).parent = (*node.as_ptr()).parent;
+            (*right_child.as_ptr()).set_parent_from_node(node);
 
-            match (*node.as_ptr()).parent {
+            match (*node.as_ptr()).get_parent() {
                 Some(parent) => {
                     if Some(node) == (*parent.as_ptr()).left {
                         (*parent.as_ptr()).left = Some(right_child);
@@ -943,7 +983,7 @@ impl<K, V> RBTreeMap<K, V> {
             }
 
             (*right_child.as_ptr()).left = Some(node);
-            (*node.as_ptr()).parent = Some(right_child);
+            (*node.as_ptr()).set_parent(Some(right_child));
         }
     }
 
@@ -961,13 +1001,13 @@ impl<K, V> RBTreeMap<K, V> {
             //
             (*node.as_ptr()).left = (*left_child.as_ptr()).right;
             if let Some(left_right_child) = (*left_child.as_ptr()).right {
-                (*left_right_child.as_ptr()).parent = Some(node);
+                (*left_right_child.as_ptr()).set_parent(Some(node));
             }
 
             // left child's parent becomes node's parent
-            (*left_child.as_ptr()).parent = (*node.as_ptr()).parent;
+            (*left_child.as_ptr()).set_parent_from_node(node);
 
-            match (*node.as_ptr()).parent {
+            match (*node.as_ptr()).get_parent() {
                 Some(parent) => {
                     if Some(node) == (*parent.as_ptr()).left {
                         (*parent.as_ptr()).left = Some(left_child);
@@ -980,12 +1020,12 @@ impl<K, V> RBTreeMap<K, V> {
             }
 
             (*left_child.as_ptr()).right = Some(node);
-            (*node.as_ptr()).parent = Some(left_child);
+            (*node.as_ptr()).set_parent(Some(left_child));
         }
     }
 
     unsafe fn insert_fixup(&mut self, mut node: NonNull<Node<K, V>>) {
-        while let Some(mut parent) = (*node.as_ptr()).parent {
+        while let Some(mut parent) = (*node.as_ptr()).get_parent() {
             // loop invariant: node is red
 
             // if parent is black, we are done
@@ -995,7 +1035,7 @@ impl<K, V> RBTreeMap<K, V> {
 
             // since parent is red and root is always black, grandparent will exist
             let gparent = (*parent.as_ptr())
-                .parent
+                .get_parent()
                 .expect("where are you grandparent?");
 
             if Some(parent) == (*gparent.as_ptr()).left {
@@ -1015,9 +1055,9 @@ impl<K, V> RBTreeMap<K, V> {
                         //   n            n
                         //
                         // since g's parent might be red, need to recurse at g
-                        (*parent.as_ptr()).color = Color::Black;
-                        (*uncle.as_ptr()).color = Color::Black;
-                        (*gparent.as_ptr()).color = Color::Red;
+                        (*parent.as_ptr()).set_color(Color::Black);
+                        (*uncle.as_ptr()).set_color(Color::Black);
+                        (*gparent.as_ptr()).set_color(Color::Red);
                         node = gparent;
                     }
                     _ => {
@@ -1048,8 +1088,8 @@ impl<K, V> RBTreeMap<K, V> {
                         //     /                 \
                         //    n                   U
                         //
-                        (*parent.as_ptr()).color = Color::Black;
-                        (*gparent.as_ptr()).color = Color::Red;
+                        (*parent.as_ptr()).set_color(Color::Black);
+                        (*gparent.as_ptr()).set_color(Color::Red);
                         self.right_rotate(gparent);
                         break;
                     }
@@ -1061,9 +1101,9 @@ impl<K, V> RBTreeMap<K, V> {
                     // both parent and uncle are red
                     Some(uncle) if (*uncle.as_ptr()).is_red() => {
                         // case 1
-                        (*parent.as_ptr()).color = Color::Black;
-                        (*uncle.as_ptr()).color = Color::Black;
-                        (*gparent.as_ptr()).color = Color::Red;
+                        (*parent.as_ptr()).set_color(Color::Black);
+                        (*uncle.as_ptr()).set_color(Color::Black);
+                        (*gparent.as_ptr()).set_color(Color::Red);
                         node = gparent;
                     }
                     _ => {
@@ -1074,8 +1114,8 @@ impl<K, V> RBTreeMap<K, V> {
                         }
 
                         // case 3
-                        (*parent.as_ptr()).color = Color::Black;
-                        (*gparent.as_ptr()).color = Color::Red;
+                        (*parent.as_ptr()).set_color(Color::Black);
+                        (*gparent.as_ptr()).set_color(Color::Red);
                         self.left_rotate(gparent);
                         break;
                     }
@@ -1084,7 +1124,7 @@ impl<K, V> RBTreeMap<K, V> {
         }
 
         // SAFETY: since we came here from insert, the tree is not empty
-        (*self.root.expect("tree empty after insertion!").as_ptr()).color = Color::Black;
+        (*self.root.expect("tree empty after insertion!").as_ptr()).set_color(Color::Black);
     }
 
     unsafe fn remove_node<Q>(&mut self, node: NonNull<Node<K, V>>) -> (K, V)
@@ -1103,12 +1143,12 @@ impl<K, V> RBTreeMap<K, V> {
                 self.transplant(node, right_child_option);
                 match right_child_option {
                     Some(right_child) => {
-                        (*right_child.as_ptr()).color = Color::Black;
+                        (*right_child.as_ptr()).set_color(Color::Black);
                     }
                     None => {
                         // no children! need to rebalance only if the node is black
                         if (*node.as_ptr()).is_black() {
-                            rebalance = (*node.as_ptr()).parent;
+                            rebalance = (*node.as_ptr()).get_parent();
                         }
                     }
                 }
@@ -1116,7 +1156,7 @@ impl<K, V> RBTreeMap<K, V> {
             (left_child_option @ Some(left_child), None) => {
                 // case 1b: only 1 child, a left one
                 self.transplant(node, left_child_option);
-                (*left_child.as_ptr()).color = Color::Black;
+                (*left_child.as_ptr()).set_color(Color::Black);
             }
             (left_child_option @ Some(left_child), right_child_option @ Some(right_child)) => {
                 let successor = Self::first(right_child);
@@ -1152,9 +1192,9 @@ impl<K, V> RBTreeMap<K, V> {
 
                     // node's right child becomes successor's right child
                     (*successor.as_ptr()).right = right_child_option;
-                    (*right_child.as_ptr()).parent = Some(successor);
+                    (*right_child.as_ptr()).set_parent(Some(successor));
 
-                    (*successor.as_ptr()).parent
+                    (*successor.as_ptr()).get_parent()
                 };
 
                 // replace node by its successor
@@ -1162,17 +1202,17 @@ impl<K, V> RBTreeMap<K, V> {
 
                 // give node's left child to its successsor
                 (*successor.as_ptr()).left = left_child_option;
-                (*left_child.as_ptr()).parent = Some(successor);
+                (*left_child.as_ptr()).set_parent(Some(successor));
 
                 // give node's color to its successor
-                (*successor.as_ptr()).color = (*node.as_ptr()).color;
+                (*successor.as_ptr()).set_color_from_node(node);
 
                 if let Some(successor_right_child) = successor_right_child_option {
                     // successor's right (and only) child must be red due to the black-property and
                     // successor must be black due to the red-property
 
                     // give successor's right child the color of the successor
-                    (*successor_right_child.as_ptr()).color = Color::Black;
+                    (*successor_right_child.as_ptr()).set_color(Color::Black);
                 } else if (*successor.as_ptr()).is_black() {
                     // need to rebalance only if successor has no child and is black
                     rebalance = successor_right_child_parent;
@@ -1221,7 +1261,7 @@ impl<K, V> RBTreeMap<K, V> {
         to_replace: NonNull<Node<K, V>>,
         replacement_option: Option<NonNull<Node<K, V>>>,
     ) {
-        match (*to_replace.as_ptr()).parent {
+        match (*to_replace.as_ptr()).get_parent() {
             Some(parent) => {
                 if Some(to_replace) == (*parent.as_ptr()).left {
                     (*parent.as_ptr()).left = replacement_option;
@@ -1233,7 +1273,7 @@ impl<K, V> RBTreeMap<K, V> {
         }
 
         if let Some(node) = replacement_option {
-            (*node.as_ptr()).parent = (*to_replace.as_ptr()).parent;
+            (*node.as_ptr()).set_parent_from_node(to_replace);
         }
     }
 
@@ -1258,8 +1298,8 @@ impl<K, V> RBTreeMap<K, V> {
                     //      / \         / \
                     //     Sl  Sr      N   Sl
                     //
-                    (*sibling.as_ptr()).color = Color::Black;
-                    (*parent.as_ptr()).color = Color::Red;
+                    (*sibling.as_ptr()).set_color(Color::Black);
+                    (*parent.as_ptr()).set_color(Color::Red);
                     self.left_rotate(parent);
                     // sibling must have black children, since the leaf paths through
                     // parent and sibling hasn't had an extra black till now
@@ -1287,12 +1327,12 @@ impl<K, V> RBTreeMap<K, V> {
                         // fix any black-property violation by flipping p to black
                         // if it was red or by recursing at p.
                         //
-                        (*sibling.as_ptr()).color = Color::Red;
+                        (*sibling.as_ptr()).set_color(Color::Red);
                         if (*parent.as_ptr()).is_red() {
-                            (*parent.as_ptr()).color = Color::Black;
+                            (*parent.as_ptr()).set_color(Color::Black);
                         } else {
                             node_option = Some(parent);
-                            if let Some(gparent) = (*parent.as_ptr()).parent {
+                            if let Some(gparent) = (*parent.as_ptr()).get_parent() {
                                 parent = gparent;
                                 continue;
                             }
@@ -1317,8 +1357,8 @@ impl<K, V> RBTreeMap<K, V> {
                     // SAFETY: already checked sibling's left child for None and black
                     let sibling_left_child =
                         sibling_left_child_option.expect("sibling's left child empty!");
-                    (*sibling_left_child.as_ptr()).color = Color::Black;
-                    (*sibling.as_ptr()).color = Color::Red;
+                    (*sibling_left_child.as_ptr()).set_color(Color::Black);
+                    (*sibling.as_ptr()).set_color(Color::Red);
                     self.right_rotate(sibling);
                     // new sibling is original sibling's left child
                     sibling = sibling_left_child;
@@ -1339,9 +1379,9 @@ impl<K, V> RBTreeMap<K, V> {
                 // SAFETY: already checked sibling's right child for None and black
                 let sibling_right_child =
                     sibling_right_child_option.expect("sibling's right child empty!");
-                (*sibling.as_ptr()).color = (*parent.as_ptr()).color;
-                (*parent.as_ptr()).color = Color::Black;
-                (*sibling_right_child.as_ptr()).color = Color::Black;
+                (*sibling.as_ptr()).set_color_from_node(parent);
+                (*parent.as_ptr()).set_color(Color::Black);
+                (*sibling_right_child.as_ptr()).set_color(Color::Black);
 
                 self.left_rotate(parent);
                 break;
@@ -1351,8 +1391,8 @@ impl<K, V> RBTreeMap<K, V> {
                 let mut sibling = (*parent.as_ptr()).left.expect("missing sibling");
                 if (*sibling.as_ptr()).is_red() {
                     // case 1
-                    (*sibling.as_ptr()).color = Color::Black;
-                    (*parent.as_ptr()).color = Color::Red;
+                    (*sibling.as_ptr()).set_color(Color::Black);
+                    (*parent.as_ptr()).set_color(Color::Red);
                     self.right_rotate(parent);
                     sibling = (*parent.as_ptr())
                         .left
@@ -1364,12 +1404,12 @@ impl<K, V> RBTreeMap<K, V> {
                     let sibling_right_child_option = (*sibling.as_ptr()).right;
                     if sibling_right_child_option.map_or(true, |node| (*node.as_ptr()).is_black()) {
                         // case 2
-                        (*sibling.as_ptr()).color = Color::Red;
+                        (*sibling.as_ptr()).set_color(Color::Red);
                         if (*parent.as_ptr()).is_red() {
-                            (*parent.as_ptr()).color = Color::Black;
+                            (*parent.as_ptr()).set_color(Color::Black);
                         } else {
                             node_option = Some(parent);
-                            if let Some(gparent) = (*parent.as_ptr()).parent {
+                            if let Some(gparent) = (*parent.as_ptr()).get_parent() {
                                 parent = gparent;
                                 continue;
                             }
@@ -1380,8 +1420,8 @@ impl<K, V> RBTreeMap<K, V> {
                     // case 3
                     let sibling_right_child =
                         sibling_right_child_option.expect("sibling's right child empty!");
-                    (*sibling_right_child.as_ptr()).color = Color::Black;
-                    (*sibling.as_ptr()).color = Color::Red;
+                    (*sibling_right_child.as_ptr()).set_color(Color::Black);
+                    (*sibling.as_ptr()).set_color(Color::Red);
                     self.left_rotate(sibling);
                     sibling = sibling_right_child;
                 }
@@ -1390,9 +1430,9 @@ impl<K, V> RBTreeMap<K, V> {
 
                 let sibling_left_child =
                     sibling_left_child_option.expect("sibling's left child empty!");
-                (*sibling.as_ptr()).color = (*parent.as_ptr()).color;
-                (*parent.as_ptr()).color = Color::Black;
-                (*sibling_left_child.as_ptr()).color = Color::Black;
+                (*sibling.as_ptr()).set_color_from_node(parent);
+                (*parent.as_ptr()).set_color(Color::Black);
+                (*sibling_left_child.as_ptr()).set_color(Color::Black);
 
                 self.right_rotate(parent);
                 break;
@@ -1723,26 +1763,26 @@ where
         fn clone_subtree<K: Clone, V: Clone>(node: NonNull<Node<K, V>>) -> NonNull<Node<K, V>> {
             let new_node = unsafe {
                 NonNull::new_unchecked(Box::into_raw(Box::new(Node {
-                    parent: None,
+                    parent_color: (*node.as_ptr()).get_color_raw()
+                        | core::ptr::null::<Node<K, V>>() as usize,
                     left: None,
                     right: None,
                     key: (*node.as_ptr()).key.clone(),
                     val: (*node.as_ptr()).val.clone(),
-                    color: (*node.as_ptr()).color,
                 })))
             };
 
             if let Some(left_subtree) = unsafe { (*node.as_ptr()).left } {
                 let new_left_subtree = clone_subtree(left_subtree);
                 unsafe {
-                    (*new_left_subtree.as_ptr()).parent = Some(new_node);
+                    (*new_left_subtree.as_ptr()).set_parent(Some(new_node));
                     (*new_node.as_ptr()).left = Some(new_left_subtree);
                 }
             }
             if let Some(right_subtree) = unsafe { (*node.as_ptr()).right } {
                 let new_right_subtree = clone_subtree(right_subtree);
                 unsafe {
-                    (*new_right_subtree.as_ptr()).parent = Some(new_node);
+                    (*new_right_subtree.as_ptr()).set_parent(Some(new_node));
                     (*new_node.as_ptr()).right = Some(new_right_subtree);
                 }
             }
@@ -1949,7 +1989,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
             } else {
                 self.front = None;
                 let mut curr = node;
-                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                while let Some(parent) = unsafe { (*curr.as_ptr()).get_parent() } {
                     if unsafe { (*parent.as_ptr()).left } == Some(curr) {
                         self.front = Some(parent);
                         break;
@@ -1992,7 +2032,7 @@ impl<'a, K, V> DoubleEndedIterator for Iter<'a, K, V> {
             } else {
                 self.back = None;
                 let mut curr = node;
-                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                while let Some(parent) = unsafe { (*curr.as_ptr()).get_parent() } {
                     if unsafe { (*parent.as_ptr()).right } == Some(curr) {
                         self.back = Some(parent);
                         break;
@@ -2206,7 +2246,7 @@ impl<'a, K, V> Iterator for IterMut<'a, K, V> {
             } else {
                 self.front = None;
                 let mut curr = node;
-                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                while let Some(parent) = unsafe { (*curr.as_ptr()).get_parent() } {
                     if unsafe { (*parent.as_ptr()).left } == Some(curr) {
                         self.front = Some(parent);
                         break;
@@ -2249,7 +2289,7 @@ impl<'a, K, V> DoubleEndedIterator for IterMut<'a, K, V> {
             } else {
                 self.back = None;
                 let mut curr = node;
-                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                while let Some(parent) = unsafe { (*curr.as_ptr()).get_parent() } {
                     if unsafe { (*parent.as_ptr()).right } == Some(curr) {
                         self.back = Some(parent);
                         break;
@@ -2388,9 +2428,9 @@ impl<K, V> Iterator for IntoIter<K, V> {
             // if we have a right child, go down and take the leftmost child
             if let Some(right_child) = unsafe { (*node.as_ptr()).right } {
                 self.front = Some(RBTreeMap::first(right_child));
-                let parent_option = unsafe { (*node.as_ptr()).parent };
+                let parent_option = unsafe { (*node.as_ptr()).get_parent() };
                 unsafe {
-                    (*right_child.as_ptr()).parent = parent_option;
+                    (*right_child.as_ptr()).set_parent(parent_option);
                 }
                 if let Some(parent) = parent_option {
                     unsafe {
@@ -2404,7 +2444,7 @@ impl<K, V> Iterator for IntoIter<K, V> {
             } else {
                 self.front = None;
                 let mut curr = node;
-                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                while let Some(parent) = unsafe { (*curr.as_ptr()).get_parent() } {
                     if unsafe { (*parent.as_ptr()).left } == Some(curr) {
                         self.front = Some(parent);
                         break;
@@ -2444,8 +2484,8 @@ impl<K, V> DoubleEndedIterator for IntoIter<K, V> {
         self.back.map(|node| {
             if let Some(left_child) = unsafe { (*node.as_ptr()).left } {
                 self.back = Some(RBTreeMap::last(left_child));
-                let parent_option = unsafe { (*node.as_ptr()).parent };
-                unsafe { (*left_child.as_ptr()).parent = parent_option };
+                let parent_option = unsafe { (*node.as_ptr()).get_parent() };
+                unsafe { (*left_child.as_ptr()).set_parent(parent_option) };
                 if let Some(parent) = parent_option {
                     unsafe {
                         if Some(node) == (*parent.as_ptr()).left {
@@ -2458,7 +2498,7 @@ impl<K, V> DoubleEndedIterator for IntoIter<K, V> {
             } else {
                 self.back = None;
                 let mut curr = node;
-                while let Some(parent) = unsafe { (*curr.as_ptr()).parent } {
+                while let Some(parent) = unsafe { (*curr.as_ptr()).get_parent() } {
                     if unsafe { (*parent.as_ptr()).right } == Some(curr) {
                         self.back = Some(parent);
                         break;
@@ -2642,7 +2682,6 @@ mod test {
         test(size, map.into_iter().rev());
     }
 
-    // from https://github.com/tickbh/rbtree-rs/blob/master/src/lib.rs#L1437
     #[test]
     fn test_clone() {
         // Miri is too slow
