@@ -16,7 +16,7 @@ enum Color {
 }
 
 struct Node<K, V> {
-    parent_color: usize,
+    parent_color: usize, // color is stored in the last bit of parent pointer (similar to Linux kernel)
     left: Option<NonNull<Node<K, V>>>,
     right: Option<NonNull<Node<K, V>>>,
     key: K,
